@@ -1,14 +1,13 @@
 -- ==========================================
--- MM2 TRADE HELPER v4.0 (API Edition)
+-- MM2 TRADE HELPER v4.1 (Debug Edition)
 -- ==========================================
 
 local YOUR_NAME = "Nick9l"
-local key_p1 = "rbx_" -- Первая часть ключа
-local key_p2 = "5853d75be1c90cdaf60d8f62a89507bbdc2818578a4142e2" -- Вторая часть (без rbx_)
+local key_p1 = "rbx_" 
+local key_p2 = "5853d75be1c90cdaf60d8f62a89507bbdc2818578a4142e2" -- Напоминаю, без 'rbx_'
 local API_KEY = key_p1 .. key_p2
 local API_URL = "https://api.rblxvalue.com/v2/items/"
 
--- Цвета редкостей
 local RARITY_COLORS = {
     ["Common"] = Color3.fromRGB(150, 150, 150),
     ["Uncommon"] = Color3.fromRGB(0, 255, 255),
@@ -19,9 +18,7 @@ local RARITY_COLORS = {
     ["Ancient"] = Color3.fromRGB(255, 165, 0),
 }
 
--- ==========================================
--- ЗАГРУЗОЧНЫЙ ЭКРАН
--- ==========================================
+-- Загрузочный экран
 local SplashGui = Instance.new("ScreenGui")
 SplashGui.Parent = game.CoreGui
 local SplashFrame = Instance.new("Frame")
@@ -32,24 +29,20 @@ local SplashText = Instance.new("TextLabel")
 SplashText.Parent = SplashFrame
 SplashText.Size = UDim2.new(1, 0, 1, 0)
 SplashText.BackgroundTransparency = 1
-SplashText.Text = "Добро пожаловать, " .. YOUR_NAME .. "!\nЗагрузка Trade Helper..."
+SplashText.Text = "Добро пожаловать, " .. YOUR_NAME .. "!"
 SplashText.TextColor3 = Color3.fromRGB(255, 255, 255)
 SplashText.Font = Enum.Font.SourceSansBold
 SplashText.TextSize = 30
-
-task.wait(2)
+task.wait(1.5)
 SplashGui:Destroy()
 
--- ==========================================
--- ОСНОВНОЙ ИНТЕРФЕЙС
--- ==========================================
+-- Интерфейс
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = game.CoreGui
-
 local MainFrame = Instance.new("Frame")
 MainFrame.Parent = ScreenGui
-MainFrame.Size = UDim2.new(0, 500, 0, 450)
-MainFrame.Position = UDim2.new(0.5, -250, 0.5, -225)
+MainFrame.Size = UDim2.new(0, 520, 0, 450)
+MainFrame.Position = UDim2.new(0.5, -260, 0.5, -225)
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 MainFrame.BorderSizePixel = 2
 MainFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
@@ -60,7 +53,7 @@ local Title = Instance.new("TextLabel")
 Title.Parent = MainFrame
 Title.Size = UDim2.new(1, 0, 0, 35)
 Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-Title.Text = "MM2 Trade Helper v4.0 | " .. YOUR_NAME
+Title.Text = "MM2 Trade Helper | " .. YOUR_NAME
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 18
@@ -82,7 +75,7 @@ local function createTradeSide(xOffset, titleText)
     
     local InputBox = Instance.new("TextBox")
     InputBox.Parent = SideFrame
-    InputBox.Size = UDim2.new(0.7, 0, 0, 30)
+    InputBox.Size = UDim2.new(0.65, 0, 0, 30)
     InputBox.Position = UDim2.new(0.05, 0, 0.1, 0)
     InputBox.PlaceholderText = "Название..."
     InputBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
@@ -90,8 +83,8 @@ local function createTradeSide(xOffset, titleText)
     
     local AddBtn = Instance.new("TextButton")
     AddBtn.Parent = SideFrame
-    AddBtn.Size = UDim2.new(0.2, 0, 0, 30)
-    AddBtn.Position = UDim2.new(0.78, 0, 0.1, 0)
+    AddBtn.Size = UDim2.new(0.25, 0, 0, 30)
+    AddBtn.Position = UDim2.new(0.72, 0, 0.1, 0)
     AddBtn.Text = "+"
     AddBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
     AddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -104,7 +97,6 @@ local function createTradeSide(xOffset, titleText)
     ListFrame.Position = UDim2.new(0.05, 0, 0.22, 0)
     ListFrame.BackgroundTransparency = 1
     ListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    ListFrame.ScrollBarThickness = 5
     
     local UIListLayout = Instance.new("UIListLayout")
     UIListLayout.Parent = ListFrame
@@ -120,13 +112,13 @@ local function createTradeSide(xOffset, titleText)
     SideSum.TextColor3 = Color3.fromRGB(255, 255, 255)
     SideSum.Font = Enum.Font.SourceSansBold
 
-    return InputBox, AddBtn, ListFrame, SideSum, UIListLayout
+    return InputBox, AddBtn, ListFrame, SideSum
 end
 
-local MyInput, MyAdd, MyList, MySumLabel, MyLayout = createTradeSide(0.02, "Твои предметы")
-local HisInput, HisAdd, HisList, HisSumLabel, HisLayout = createTradeSide(0.53, "Предметы оппонента")
+local MyInput, MyAdd, MyList, MySumLabel = createTradeSide(0.02, "Твои предметы")
+local HisInput, HisAdd, HisList, HisSumLabel = createTradeSide(0.53, "Предметы оппонента")
 
--- Шкала и Результат
+-- Шкала
 local BarBackground = Instance.new("Frame")
 BarBackground.Parent = MainFrame
 BarBackground.Size = UDim2.new(0.9, 0, 0, 20)
@@ -147,34 +139,38 @@ ResultText.BackgroundTransparency = 1
 ResultText.Text = "Ожидание..."
 ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
 ResultText.Font = Enum.Font.SourceSansBold
-ResultText.TextSize = 18
+ResultText.TextSize = 16
 ResultText.TextWrapped = true
 
--- Логика
 local myItems = {}
 local hisItems = {}
-local cache = {} -- Кэш, чтобы не спрашивать API один и тот же предмет дважды
 
 local function getItemData(name)
-    if cache[name] then return cache[name].value, cache[name].rarity end
-    
     local encodedName = string.gsub(name, " ", "%%20")
     local url = API_URL .. encodedName
     
     local success, response = pcall(function()
+        -- Добавил true для HttpGetAsync, чтобы он не крашил игру
         return game:HttpGetAsync(url, true, {["X-Api-Key"] = API_KEY})
     end)
 
     if success then
+        -- Пытаемся найти цену
         local value = string.match(response, '"value":%s*(%d+)')
+        if not value then value = string.match(response, '"price":%s*(%d+)') end
+        
         local rarity = string.match(response, '"rarity":"([^"]+)"')
         
-        if value and rarity then
-            cache[name] = {value = tonumber(value), rarity = rarity}
-            return tonumber(value), rarity
+        if value then
+            return tonumber(value), rarity or "Unknown", "OK"
+        else
+            -- Если ответ есть, но цены нет, возможно предмет не найден
+            return 0, "Unknown", "Предмет не найден (или неверное имя)"
         end
+    else
+        -- Если запрос не прошел, выводим ошибку
+        return 0, "Unknown", "Ошибка API: " .. tostring(response)
     end
-    return 0, "Unknown"
 end
 
 local function updateUI()
@@ -183,48 +179,85 @@ local function updateUI()
 
     local myTotal = 0
     local hisTotal = 0
+    local lastError = ""
 
-    for _, item in ipairs(myItems) do
-        local val, rarity = getItemData(item.name)
+    for i, item in ipairs(myItems) do
+        local val, rarity, status = getItemData(item.name)
+        if status ~= "OK" then lastError = status end
         myTotal = myTotal + (val * item.count)
+        
         local lbl = Instance.new("TextLabel")
         lbl.Parent = MyList
-        lbl.Size = UDim2.new(1, 0, 0, 25)
+        lbl.Size = UDim2.new(0.8, 0, 0, 25)
         lbl.BackgroundTransparency = 1
-        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "")
+        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "") .. " (" .. val .. ")"
         lbl.TextColor3 = RARITY_COLORS[rarity] or Color3.fromRGB(255, 255, 255)
         lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.LayoutOrder = i
         
-        local btn = Instance.new("TextButton")
-        btn.Parent = lbl
-        btn.Size = UDim2.new(1, 0, 1, 0)
-        btn.BackgroundTransparency = 1
-        btn.Text = ""
-        btn.MouseButton1Click:Connect(function()
+        -- Кнопка добавления
+        local plusBtn = Instance.new("TextButton")
+        plusBtn.Parent = lbl
+        plusBtn.Size = UDim2.new(0.1, 0, 1, 0)
+        plusBtn.Position = UDim2.new(0.6, 0, 0, 0)
+        plusBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
+        plusBtn.Text = "+"
+        plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        plusBtn.MouseButton1Click:Connect(function()
             item.count = item.count + 1
+            updateUI()
+        end)
+
+        -- Кнопка удаления (корзина)
+        local delBtn = Instance.new("TextButton")
+        delBtn.Parent = lbl
+        delBtn.Size = UDim2.new(0.1, 0, 1, 0)
+        delBtn.Position = UDim2.new(0.85, 0, 0, 0)
+        delBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+        delBtn.Text = "X"
+        delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        delBtn.MouseButton1Click:Connect(function()
+            table.remove(myItems, i)
             updateUI()
         end)
     end
     MyList.CanvasSize = UDim2.new(0, 0, 0, #myItems * 27)
 
-    for _, item in ipairs(hisItems) do
-        local val, rarity = getItemData(item.name)
+    for i, item in ipairs(hisItems) do
+        local val, rarity, status = getItemData(item.name)
+        if status ~= "OK" then lastError = status end
         hisTotal = hisTotal + (val * item.count)
+        
         local lbl = Instance.new("TextLabel")
         lbl.Parent = HisList
-        lbl.Size = UDim2.new(1, 0, 0, 25)
+        lbl.Size = UDim2.new(0.8, 0, 0, 25)
         lbl.BackgroundTransparency = 1
-        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "")
+        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "") .. " (" .. val .. ")"
         lbl.TextColor3 = RARITY_COLORS[rarity] or Color3.fromRGB(255, 255, 255)
         lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.LayoutOrder = i
         
-        local btn = Instance.new("TextButton")
-        btn.Parent = lbl
-        btn.Size = UDim2.new(1, 0, 1, 0)
-        btn.BackgroundTransparency = 1
-        btn.Text = ""
-        btn.MouseButton1Click:Connect(function()
+        local plusBtn = Instance.new("TextButton")
+        plusBtn.Parent = lbl
+        plusBtn.Size = UDim2.new(0.1, 0, 1, 0)
+        plusBtn.Position = UDim2.new(0.6, 0, 0, 0)
+        plusBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
+        plusBtn.Text = "+"
+        plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        plusBtn.MouseButton1Click:Connect(function()
             item.count = item.count + 1
+            updateUI()
+        end)
+
+        local delBtn = Instance.new("TextButton")
+        delBtn.Parent = lbl
+        delBtn.Size = UDim2.new(0.1, 0, 1, 0)
+        delBtn.Position = UDim2.new(0.85, 0, 0, 0)
+        delBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
+        delBtn.Text = "X"
+        delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        delBtn.MouseButton1Click:Connect(function()
+            table.remove(hisItems, i)
             updateUI()
         end)
     end
@@ -244,17 +277,23 @@ local function updateUI()
     end
 
     if myTotal > hisTotal then
-        ResultText.Text = "🔥 Ты выигрываешь на " .. (myTotal - hisTotal) .. " валюты!"
+        ResultText.Text = "🔥 Ты выигрываешь на " .. (myTotal - hisTotal) .. "!"
         ResultText.TextColor3 = Color3.fromRGB(0, 255, 0)
         BarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
     elseif myTotal < hisTotal then
-        ResultText.Text = "❌ Ты проигрываешь на " .. (hisTotal - myTotal) .. " валюты!"
+        ResultText.Text = "❌ Ты проигрываешь на " .. (hisTotal - myTotal) .. "!"
         ResultText.TextColor3 = Color3.fromRGB(255, 50, 50)
         BarFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
     else
-        ResultText.Text = "⚖️ Равный обмен (или предмет не найден)"
+        ResultText.Text = "⚖️ Равный обмен"
         ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
         BarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    
+    -- Если была ошибка API, выводим её внизу красным
+    if lastError ~= "" then
+        ResultText.Text = ResultText.Text .. "\n(" .. lastError .. ")"
+        ResultText.TextColor3 = Color3.fromRGB(255, 150, 0) -- Оранжевый
     end
 end
 
@@ -273,6 +312,3 @@ HisAdd.MouseButton1Click:Connect(function()
         updateUI()
     end
 end)
-
-MyInput.FocusLost:Connect(function(enter) if enter then MyAdd:FireEvent("MouseButton1Click") end end)
-HisInput.FocusLost:Connect(function(enter) if enter then HisAdd:FireEvent("MouseButton1Click") end end)
