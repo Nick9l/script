@@ -1,85 +1,278 @@
--- Мой Trade Helper
+-- ==========================================
+-- MM2 TRADE HELPER v4.0 (API Edition)
+-- ==========================================
+
+local YOUR_NAME = "Nick9l"
+local key_p1 = "rbx_" -- Первая часть ключа
+local key_p2 = "5853d75be1c90cdaf60d8f62a89507bbdc2818578a4142e2" -- Вторая часть (без rbx_)
+local API_KEY = key_p1 .. key_p2
+local API_URL = "https://api.rblxvalue.com/v2/items/"
+
+-- Цвета редкостей
+local RARITY_COLORS = {
+    ["Common"] = Color3.fromRGB(150, 150, 150),
+    ["Uncommon"] = Color3.fromRGB(0, 255, 255),
+    ["Rare"] = Color3.fromRGB(0, 255, 0),
+    ["Legendary"] = Color3.fromRGB(255, 50, 50),
+    ["Godly"] = Color3.fromRGB(170, 0, 255),
+    ["Chroma"] = Color3.fromRGB(255, 0, 128),
+    ["Ancient"] = Color3.fromRGB(255, 165, 0),
+}
+
+-- ==========================================
+-- ЗАГРУЗОЧНЫЙ ЭКРАН
+-- ==========================================
+local SplashGui = Instance.new("ScreenGui")
+SplashGui.Parent = game.CoreGui
+local SplashFrame = Instance.new("Frame")
+SplashFrame.Parent = SplashGui
+SplashFrame.Size = UDim2.new(1, 0, 1, 0)
+SplashFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+local SplashText = Instance.new("TextLabel")
+SplashText.Parent = SplashFrame
+SplashText.Size = UDim2.new(1, 0, 1, 0)
+SplashText.BackgroundTransparency = 1
+SplashText.Text = "Добро пожаловать, " .. YOUR_NAME .. "!\nЗагрузка Trade Helper..."
+SplashText.TextColor3 = Color3.fromRGB(255, 255, 255)
+SplashText.Font = Enum.Font.SourceSansBold
+SplashText.TextSize = 30
+
+task.wait(2)
+SplashGui:Destroy()
+
+-- ==========================================
+-- ОСНОВНОЙ ИНТЕРФЕЙС
+-- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = game.CoreGui
-ScreenGui.Name = "MyTradeHelper"
 
--- Главное окно
 local MainFrame = Instance.new("Frame")
 MainFrame.Parent = ScreenGui
-MainFrame.Size = UDim2.new(0, 320, 0, 260)
-MainFrame.Position = UDim2.new(0.5, -160, 0.5, -130)
-MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.Size = UDim2.new(0, 500, 0, 450)
+MainFrame.Position = UDim2.new(0.5, -250, 0.5, -225)
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 MainFrame.BorderSizePixel = 2
 MainFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
--- Заголовок
 local Title = Instance.new("TextLabel")
 Title.Parent = MainFrame
 Title.Size = UDim2.new(1, 0, 0, 35)
-Title.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-Title.Text = "MM2 Trade Helper v1.0"
+Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+Title.Text = "MM2 Trade Helper v4.0 | " .. YOUR_NAME
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 18
 
--- Поле для твоего предмета
-local MyItemBox = Instance.new("TextBox")
-MyItemBox.Parent = MainFrame
-MyItemBox.Size = UDim2.new(0.8, 0, 0, 35)
-MyItemBox.Position = UDim2.new(0.1, 0, 0.2, 0)
-MyItemBox.PlaceholderText = "Твой предмет"
-MyItemBox.Text = ""
-MyItemBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-MyItemBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-MyItemBox.Font = Enum.Font.SourceSans
-MyItemBox.TextSize = 14
-
--- Поле для его предмета
-local HisItemBox = Instance.new("TextBox")
-HisItemBox.Parent = MainFrame
-HisItemBox.Size = UDim2.new(0.8, 0, 0, 35)
-HisItemBox.Position = UDim2.new(0.1, 0, 0.38, 0)
-HisItemBox.PlaceholderText = "Его предмет"
-HisItemBox.Text = ""
-HisItemBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-HisItemBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-HisItemBox.Font = Enum.Font.SourceSans
-HisItemBox.TextSize = 14
-
--- Кнопка
-local CalcButton = Instance.new("TextButton")
-CalcButton.Parent = MainFrame
-CalcButton.Size = UDim2.new(0.8, 0, 0, 35)
-CalcButton.Position = UDim2.new(0.1, 0, 0.6, 0)
-CalcButton.Text = "Посчитать"
-CalcButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-CalcButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-CalcButton.Font = Enum.Font.SourceSansBold
-CalcButton.TextSize = 16
-
--- Поле для результата
-local ResultLabel = Instance.new("TextLabel")
-ResultLabel.Parent = MainFrame
-ResultLabel.Size = UDim2.new(0.8, 0, 0, 50)
-ResultLabel.Position = UDim2.new(0.1, 0, 0.8, 0)
-ResultLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-ResultLabel.Text = "Результат"
-ResultLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-ResultLabel.Font = Enum.Font.SourceSans
-ResultLabel.TextSize = 14
-ResultLabel.TextWrapped = true
-
--- Логика кнопки (пока заглушка)
-CalcButton.MouseButton1Click:Connect(function()
-    local myItem = MyItemBox.Text
-    local hisItem = HisItemBox.Text
+local function createTradeSide(xOffset, titleText)
+    local SideFrame = Instance.new("Frame")
+    SideFrame.Parent = MainFrame
+    SideFrame.Size = UDim2.new(0.45, 0, 0.6, 0)
+    SideFrame.Position = UDim2.new(xOffset, 0, 0.1, 0)
+    SideFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
     
-    if myItem == "" or hisItem == "" then
-        ResultLabel.Text = "Введи названия предметов!"
-        return
+    local SideTitle = Instance.new("TextLabel")
+    SideTitle.Parent = SideFrame
+    SideTitle.Size = UDim2.new(1, 0, 0, 25)
+    SideTitle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    SideTitle.Text = titleText
+    SideTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SideTitle.Font = Enum.Font.SourceSansBold
+    
+    local InputBox = Instance.new("TextBox")
+    InputBox.Parent = SideFrame
+    InputBox.Size = UDim2.new(0.7, 0, 0, 30)
+    InputBox.Position = UDim2.new(0.05, 0, 0.1, 0)
+    InputBox.PlaceholderText = "Название..."
+    InputBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    
+    local AddBtn = Instance.new("TextButton")
+    AddBtn.Parent = SideFrame
+    AddBtn.Size = UDim2.new(0.2, 0, 0, 30)
+    AddBtn.Position = UDim2.new(0.78, 0, 0.1, 0)
+    AddBtn.Text = "+"
+    AddBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+    AddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    AddBtn.Font = Enum.Font.SourceSansBold
+    AddBtn.TextSize = 20
+    
+    local ListFrame = Instance.new("ScrollingFrame")
+    ListFrame.Parent = SideFrame
+    ListFrame.Size = UDim2.new(0.9, 0, 0.7, 0)
+    ListFrame.Position = UDim2.new(0.05, 0, 0.22, 0)
+    ListFrame.BackgroundTransparency = 1
+    ListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    ListFrame.ScrollBarThickness = 5
+    
+    local UIListLayout = Instance.new("UIListLayout")
+    UIListLayout.Parent = ListFrame
+    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    UIListLayout.Padding = UDim.new(0, 2)
+    
+    local SideSum = Instance.new("TextLabel")
+    SideSum.Parent = SideFrame
+    SideSum.Size = UDim2.new(1, 0, 0, 25)
+    SideSum.Position = UDim2.new(0, 0, 0.95, 0)
+    SideSum.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    SideSum.Text = "Сумма: 0"
+    SideSum.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SideSum.Font = Enum.Font.SourceSansBold
+
+    return InputBox, AddBtn, ListFrame, SideSum, UIListLayout
+end
+
+local MyInput, MyAdd, MyList, MySumLabel, MyLayout = createTradeSide(0.02, "Твои предметы")
+local HisInput, HisAdd, HisList, HisSumLabel, HisLayout = createTradeSide(0.53, "Предметы оппонента")
+
+-- Шкала и Результат
+local BarBackground = Instance.new("Frame")
+BarBackground.Parent = MainFrame
+BarBackground.Size = UDim2.new(0.9, 0, 0, 20)
+BarBackground.Position = UDim2.new(0.05, 0, 0.75, 0)
+BarBackground.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+
+local BarFill = Instance.new("Frame")
+BarFill.Parent = BarBackground
+BarFill.Size = UDim2.new(0.5, 0, 1, 0)
+BarFill.Position = UDim2.new(0.5, 0, 0, 0)
+BarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+
+local ResultText = Instance.new("TextLabel")
+ResultText.Parent = MainFrame
+ResultText.Size = UDim2.new(0.9, 0, 0, 40)
+ResultText.Position = UDim2.new(0.05, 0, 0.83, 0)
+ResultText.BackgroundTransparency = 1
+ResultText.Text = "Ожидание..."
+ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
+ResultText.Font = Enum.Font.SourceSansBold
+ResultText.TextSize = 18
+ResultText.TextWrapped = true
+
+-- Логика
+local myItems = {}
+local hisItems = {}
+local cache = {} -- Кэш, чтобы не спрашивать API один и тот же предмет дважды
+
+local function getItemData(name)
+    if cache[name] then return cache[name].value, cache[name].rarity end
+    
+    local encodedName = string.gsub(name, " ", "%%20")
+    local url = API_URL .. encodedName
+    
+    local success, response = pcall(function()
+        return game:HttpGetAsync(url, true, {["X-Api-Key"] = API_KEY})
+    end)
+
+    if success then
+        local value = string.match(response, '"value":%s*(%d+)')
+        local rarity = string.match(response, '"rarity":"([^"]+)"')
+        
+        if value and rarity then
+            cache[name] = {value = tonumber(value), rarity = rarity}
+            return tonumber(value), rarity
+        end
     end
-    
-    ResultLabel.Text = "Ты: " .. myItem .. "\nОн: " .. hisItem .. "\n(Тут будет подсчёт)"
+    return 0, "Unknown"
+end
+
+local function updateUI()
+    for _, child in ipairs(MyList:GetChildren()) do if child:IsA("TextLabel") then child:Destroy() end end
+    for _, child in ipairs(HisList:GetChildren()) do if child:IsA("TextLabel") then child:Destroy() end end
+
+    local myTotal = 0
+    local hisTotal = 0
+
+    for _, item in ipairs(myItems) do
+        local val, rarity = getItemData(item.name)
+        myTotal = myTotal + (val * item.count)
+        local lbl = Instance.new("TextLabel")
+        lbl.Parent = MyList
+        lbl.Size = UDim2.new(1, 0, 0, 25)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "")
+        lbl.TextColor3 = RARITY_COLORS[rarity] or Color3.fromRGB(255, 255, 255)
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        
+        local btn = Instance.new("TextButton")
+        btn.Parent = lbl
+        btn.Size = UDim2.new(1, 0, 1, 0)
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.MouseButton1Click:Connect(function()
+            item.count = item.count + 1
+            updateUI()
+        end)
+    end
+    MyList.CanvasSize = UDim2.new(0, 0, 0, #myItems * 27)
+
+    for _, item in ipairs(hisItems) do
+        local val, rarity = getItemData(item.name)
+        hisTotal = hisTotal + (val * item.count)
+        local lbl = Instance.new("TextLabel")
+        lbl.Parent = HisList
+        lbl.Size = UDim2.new(1, 0, 0, 25)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "")
+        lbl.TextColor3 = RARITY_COLORS[rarity] or Color3.fromRGB(255, 255, 255)
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        
+        local btn = Instance.new("TextButton")
+        btn.Parent = lbl
+        btn.Size = UDim2.new(1, 0, 1, 0)
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.MouseButton1Click:Connect(function()
+            item.count = item.count + 1
+            updateUI()
+        end)
+    end
+    HisList.CanvasSize = UDim2.new(0, 0, 0, #hisItems * 27)
+
+    MySumLabel.Text = "Сумма: " .. myTotal
+    HisSumLabel.Text = "Сумма: " .. hisTotal
+
+    local total = myTotal + hisTotal
+    if total > 0 then
+        local myRatio = myTotal / total
+        BarFill.Size = UDim2.new(myRatio, 0, 1, 0)
+        BarFill.Position = UDim2.new(1 - myRatio, 0, 0, 0)
+    else
+        BarFill.Size = UDim2.new(0.5, 0, 1, 0)
+        BarFill.Position = UDim2.new(0.5, 0, 0, 0)
+    end
+
+    if myTotal > hisTotal then
+        ResultText.Text = "🔥 Ты выигрываешь на " .. (myTotal - hisTotal) .. " валюты!"
+        ResultText.TextColor3 = Color3.fromRGB(0, 255, 0)
+        BarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+    elseif myTotal < hisTotal then
+        ResultText.Text = "❌ Ты проигрываешь на " .. (hisTotal - myTotal) .. " валюты!"
+        ResultText.TextColor3 = Color3.fromRGB(255, 50, 50)
+        BarFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    else
+        ResultText.Text = "⚖️ Равный обмен (или предмет не найден)"
+        ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        BarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    end
+end
+
+MyAdd.MouseButton1Click:Connect(function()
+    if MyInput.Text ~= "" then
+        table.insert(myItems, {name = MyInput.Text, count = 1})
+        MyInput.Text = ""
+        updateUI()
+    end
 end)
+
+HisAdd.MouseButton1Click:Connect(function()
+    if HisInput.Text ~= "" then
+        table.insert(hisItems, {name = HisInput.Text, count = 1})
+        HisInput.Text = ""
+        updateUI()
+    end
+end)
+
+MyInput.FocusLost:Connect(function(enter) if enter then MyAdd:FireEvent("MouseButton1Click") end end)
+HisInput.FocusLost:Connect(function(enter) if enter then HisAdd:FireEvent("MouseButton1Click") end end)
