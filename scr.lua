@@ -1,5 +1,5 @@
 -- ==========================================
--- IROSHIDA v2.3 (Stable & Fast Build)
+-- IROSHIDA v2.6 (Final Stable Build)
 -- Script made by Nick9l
 -- ==========================================
 
@@ -70,7 +70,7 @@ local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
 local Window = Library:CreateWindow({
-    Title = 'Iroshida v2.3',
+    Title = 'Iroshida v2.6',
     Center = true,
     AutoShow = true,
     TabPadding = 8,
@@ -112,7 +112,7 @@ local function updateGameState()
 end
 
 -- ==========================================
--- 5. УМНЫЙ ПОИСК (Кэширование без лагов)
+-- 5. УМНЫЙ ПОИСК (Защита от лагов в лобби)
 -- ==========================================
 local cachedCoinContainer = nil
 local lastSearchTime = 0
@@ -165,7 +165,7 @@ local function getClosestItem(mode)
 end
 
 -- ==========================================
--- 6. МОДУЛЬ ПОЛЕТА (Быстрый фарм без тормозов)
+-- 6. МОДУЛЬ ПОЛЕТА (Без CFrame, без вылетов)
 -- ==========================================
 local flyConnection = nil
 local currentTarget = nil
@@ -196,6 +196,7 @@ local function startFarmLoop()
             return
         end
 
+        -- Поиск цели раз в 0.2 сек
         targetSearchTimer = targetSearchTimer + deltaTime
         if targetSearchTimer > 0.2 or not currentTarget or not currentTarget.Parent then
             currentTarget = getClosestItem(Settings.FarmMode)
@@ -205,7 +206,7 @@ local function startFarmLoop()
         if currentTarget and hrp then
             local distance = (currentTarget.Position - hrp.Position).Magnitude
             
-            -- РАДИУС СБОРА = 1 СТАД (Просто пролетаем сквозь)
+            -- Радиус 1 стад (просто пролетаем сквозь)
             if distance < 1 then
                 if not collectedCoins[currentTarget] then
                     collectedCoins[currentTarget] = true
@@ -213,6 +214,7 @@ local function startFarmLoop()
                     currentTarget = nil 
                 end
             else
+                -- Летим на полной скорости
                 local direction = (currentTarget.Position - hrp.Position).Unit
                 bv.Velocity = direction * Settings.FlySpeed
             end
@@ -338,6 +340,15 @@ FarmGroup:AddSlider('FlySpeedSlider', {
     Callback = function(Value) Settings.FlySpeed = Value end
 })
 
+FarmGroup:AddSlider('CooldownSlider', {
+    Text = 'Задержка (сек)',
+    Default = 0.1,
+    Min = 0,
+    Max = 2,
+    Rounding = 1,
+    Callback = function(Value) Settings.Cooldown = Value end
+})
+
 local RoleGroup = Tabs.Farm:AddRightGroupbox('Role Logic')
 
 RoleGroup:AddToggle('AutoShootToggle', {
@@ -367,6 +378,7 @@ RoleGroup:AddToggle('MagnetToggle', {
 RoleGroup:AddToggle('FarmExpToggle', {
     Text = 'Фарм EXP (Без Reset)',
     Default = true,
+    Tooltip = 'Если включено, невиновный не будет умирать после сбора монет.',
     Callback = function(Value) Settings.FarmExp = Value end
 })
 
@@ -434,6 +446,12 @@ PerformanceGroup:AddToggle('GreySky', {
     end
 })
 
+PerformanceGroup:AddToggle('NoclipToggle', {
+    Text = 'Noclip (Проход сквозь стены)',
+    Default = true,
+    Callback = function(Value) Settings.Noclip = Value end
+})
+
 PerformanceGroup:AddButton('Убить эффекты (Дым/Огонь)', function()
     for _, obj in pairs(Workspace:GetDescendants()) do
         if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") then
@@ -470,8 +488,10 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 10. ОПТИМИЗИРОВАННЫЙ NOCLIP (Без лагов)
+-- 10. ОПТИМИЗИРОВАННЫЙ NOCLIP (БЕЗ ЛАГОВ)
 -- ==========================================
+-- Убрали тяжелый RunService.Stepped, который вешал игру. 
+-- Теперь Noclip проверяется раз в 0.5 секунды в отдельном потоке.
 task.spawn(function()
     while task.wait(0.5) do
         if LocalPlayer.Character then
@@ -503,4 +523,4 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
 
-print("[Iroshida v2.3] Загружен успешно!")
+print("[Iroshida v2.6] Загружен успешно!")
