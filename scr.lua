@@ -1,11 +1,12 @@
 -- ==========================================
--- IROSHIDA v8.0 (Modern UI Build)
+-- IROSHIDA v8.1 (Slider Edition)
 -- Engine: PROTO | Roles: ELITE | Logic: Nick9l
 -- ==========================================
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local LocalPlayer = Players.LocalPlayer
@@ -61,12 +62,155 @@ SplashText.TextSize = 36
 task.wait(1)
 SplashText.Text = "Загрузка..."
 task.wait(0.5)
-SplashText.Text = "Iroshida v8.0"
+SplashText.Text = "Iroshida v8.1"
 task.wait(1)
 Splash:Destroy()
 
 -- ==========================================
--- 3. СОВРЕМЕННЫЙ UI (Вкладки)
+-- 3. ЛОГИКА (Объявлена ДО UI, чтобы работала)
+-- ==========================================
+local function getRole()
+    local hasKnife, hasGun = false, false
+    
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            local n = string.lower(tool.Name)
+            if n:find("knife") then hasKnife = true end
+            if n:find("gun") or n:find("revolver") then hasGun = true end
+        end
+    end
+    
+    local char = LocalPlayer.Character
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                local n = string.lower(tool.Name)
+                if n:find("knife") then hasKnife = true end
+                if n:find("gun") or n:find("revolver") then hasGun = true end
+            end
+        end
+    end
+
+    local totalKnives, totalGuns = 0, 0
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Backpack then
+            if plr.Backpack:FindFirstChild("Knife") then totalKnives = totalKnives + 1 end
+            if plr.Backpack:FindFirstChild("Gun") then totalGuns = totalGuns + 1 end
+        end
+    end
+    isInfection = (totalKnives >= 2 or totalGuns >= 2)
+
+    if hasKnife then currentRole = isInfection and "Zombie" or "Murderer"
+    elseif hasGun then currentRole = isInfection and "Survivor" or "Sheriff"
+    else currentRole = "Innocent" end
+end
+
+local function getMap()
+    for _, v in pairs(Workspace:GetDescendants()) do
+        if v.Name == "Spawns" and v.Parent.Name ~= "Lobby" then return v.Parent end
+    end
+    return nil
+end
+
+local function getCoinContainer()
+    local map = getMap()
+    if not map then return nil end
+    return map:FindFirstChild("CoinContainer") or map:FindFirstChild("CandyContainer")
+end
+
+local function startFarm()
+    if AutoFarmThread then task.cancel(AutoFarmThread) end
+    AutoFarmThread = task.spawn(function()
+        while Settings.FarmEnabled do
+            local container = getCoinContainer()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if container and hrp then
+                local nearestPart, nearestItem, shortestDist = nil, nil, math.huge
+                for _, item in ipairs(container:GetChildren()) do
+                    if not VisitedCoins[item] then
+                        local part = item:FindFirstChild("CoinVisual") or item
+                        if part and part:IsA("BasePart") and part.Transparency < 0.5 then
+                            local dist = (hrp.Position - part.Position).Magnitude
+                            if dist < shortestDist and dist < 300 then
+                                shortestDist = dist; nearestPart = part; nearestItem = item
+                            end
+                        end
+                    end
+                end
+                if nearestPart then
+                    local duration = math.clamp(shortestDist / Settings.FlySpeed, 0.05, 3)
+                    CurrentTween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = CFrame.new(nearestPart.Position)})
+                    CurrentTween:Play()
+                    task.wait(duration + 0.1)
+                    VisitedCoins[nearestItem] = true
+                    collectedCount = collectedCount + 1
+                    task.wait(0.1)
+                else task.wait(0.5) end
+            else task.wait(0.5) end
+        end
+    end)
+end
+
+local function startRoleLogic()
+    if RoleLogicThread then task.cancel(RoleLogicThread) end
+    RoleLogicThread = task.spawn(function()
+        while Settings.FarmEnabled do
+            task.wait(0.5)
+            getRole()
+            if collectedCount >= Settings.CoinLimit then
+                if (currentRole == "Murderer" or currentRole == "Zombie") and Settings.KillAll then
+                    for _, plr in pairs(Players:GetPlayers()) do
+                        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
+                            task.wait(0.05)
+                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            task.wait(0.2)
+                        end
+                    end
+                end
+                if currentRole == "Sheriff" and Settings.AutoShoot then
+                    for _, plr in pairs(Players:GetPlayers()) do
+                        if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, plr.Character.HumanoidRootPart.Position)
+                            task.wait(0.1)
+                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                        end
+                    end
+                end
+                if currentRole == "Innocent" and Settings.AutoGun then
+                    local gunDrop = Workspace:FindFirstChild("Normal") and Workspace.Normal:FindFirstChild("GunDrop")
+                    if gunDrop then
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = gunDrop.CFrame
+                        task.wait(0.2)
+                        for _, plr in pairs(Players:GetPlayers()) do
+                            if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
+                                LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, plr.Character.HumanoidRootPart.Position)
+                                VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                                VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            end
+                        end
+                    end
+                end
+                if currentRole == "Survivor" then
+                    for _, plr in pairs(Players:GetPlayers()) do
+                        if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
+                            task.wait(0.5)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- 4. UI
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Iroshida_UI"
@@ -83,7 +227,6 @@ MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 
--- Заголовок
 local TitleBar = Instance.new("Frame")
 TitleBar.Size = UDim2.new(1, 0, 0, 35)
 TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
@@ -94,37 +237,28 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -20, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "Iroshida | v8.0"
+Title.Text = "Iroshida | v8.1"
 Title.TextColor3 = Color3.fromRGB(180, 100, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 14
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = TitleBar
 
--- Панель вкладок (слева)
 local TabBar = Instance.new("Frame")
 TabBar.Size = UDim2.new(0, 100, 1, -40)
 TabBar.Position = UDim2.new(0, 0, 0, 35)
 TabBar.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 TabBar.Parent = MainFrame
 Instance.new("UICorner", TabBar).CornerRadius = UDim.new(0, 10)
+Instance.new("UIListLayout", TabBar).Padding = UDim.new(0, 5)
 
-local TabList = Instance.new("UIListLayout", TabBar)
-TabList.Padding = UDim.new(0, 5)
-TabList.SortOrder = Enum.SortOrder.LayoutOrder
-
--- Контент (справа)
 local Content = Instance.new("Frame")
 Content.Size = UDim2.new(1, -110, 1, -45)
 Content.Position = UDim2.new(0, 105, 0, 40)
 Content.BackgroundTransparency = 1
 Content.Parent = MainFrame
 
--- Хранилище страниц
 local Pages = {}
-local ActivePage = nil
-
--- Функция создания вкладки
 local function CreateTab(name, iconText)
     local TabBtn = Instance.new("TextButton")
     TabBtn.Size = UDim2.new(1, -10, 0, 30)
@@ -142,20 +276,16 @@ local function CreateTab(name, iconText)
     Page.BackgroundTransparency = 1
     Page.Visible = false
     Page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
     Page.ScrollBarThickness = 0
     Page.Parent = Content
-    
-    local PageList = Instance.new("UIListLayout", Page)
-    PageList.Padding = UDim.new(0, 6)
-    PageList.SortOrder = Enum.SortOrder.LayoutOrder
+    Instance.new("UIListLayout", Page).Padding = UDim.new(0, 6)
 
     Pages[name] = Page
 
     TabBtn.MouseButton1Click:Connect(function()
         for _, p in pairs(Pages) do p.Visible = false end
         Page.Visible = true
-        ActivePage = Page
-        
         for _, child in ipairs(TabBar:GetChildren()) do
             if child:IsA("TextButton") then
                 child.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
@@ -165,11 +295,9 @@ local function CreateTab(name, iconText)
         TabBtn.BackgroundColor3 = Color3.fromRGB(100, 50, 150)
         TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     end)
-    
     return Page
 end
 
--- Вспомогательные функции для UI
 local function AddToggle(parent, text, key, callback)
     local Btn = Instance.new("TextButton")
     Btn.Size = UDim2.new(1, 0, 0, 32)
@@ -180,12 +308,10 @@ local function AddToggle(parent, text, key, callback)
     Btn.Text = text .. (Settings[key] and " : ON" or " : OFF")
     Btn.Parent = parent
     Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
-
     local function Update()
         Btn.Text = text .. (Settings[key] and " : ON" or " : OFF")
         Btn.BackgroundColor3 = Settings[key] and Color3.fromRGB(80, 50, 120) or Color3.fromRGB(35, 35, 45)
     end
-
     Btn.MouseButton1Click:Connect(function()
         Settings[key] = not Settings[key]
         Update()
@@ -194,29 +320,77 @@ local function AddToggle(parent, text, key, callback)
     Update()
 end
 
-local function AddSpeedButton(parent)
-    local Btn = Instance.new("TextButton")
-    Btn.Size = UDim2.new(1, 0, 0, 32)
-    Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    Btn.TextColor3 = Color3.fromRGB(200, 200, 200)
-    Btn.Font = Enum.Font.Gotham
-    Btn.TextSize = 13
-    Btn.Text = "Скорость полета: " .. Settings.FlySpeed
-    Btn.Parent = parent
-    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
+-- НОВЫЙ СЛАЙДЕР
+local function AddSlider(parent, text, min, max, default, callback)
+    local SliderFrame = Instance.new("Frame")
+    SliderFrame.Size = UDim2.new(1, 0, 0, 40)
+    SliderFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    SliderFrame.Parent = parent
+    Instance.new("UICorner", SliderFrame).CornerRadius = UDim.new(0, 6)
 
-    Btn.MouseButton1Click:Connect(function()
-        Settings.FlySpeed = Settings.FlySpeed + 10
-        if Settings.FlySpeed > 100 then Settings.FlySpeed = 10 end
-        Btn.Text = "Скорость полета: " .. Settings.FlySpeed
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, -10, 0, 15)
+    Label.Position = UDim2.new(0, 5, 0, 3)
+    Label.BackgroundTransparency = 1
+    Label.Text = text .. ": " .. default
+    Label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    Label.Font = Enum.Font.Gotham
+    Label.TextSize = 12
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = SliderFrame
+
+    local Bar = Instance.new("Frame")
+    Bar.Size = UDim2.new(1, -10, 0, 8)
+    Bar.Position = UDim2.new(0, 5, 0, 22)
+    Bar.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    Bar.Parent = SliderFrame
+    Instance.new("UICorner", Bar).CornerRadius = UDim.new(0, 4)
+
+    local Fill = Instance.new("Frame")
+    Fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    Fill.BackgroundColor3 = Color3.fromRGB(100, 50, 150)
+    Fill.Parent = Bar
+    Instance.new("UICorner", Fill).CornerRadius = UDim.new(0, 4)
+
+    local Knob = Instance.new("Frame")
+    Knob.Size = UDim2.new(0, 14, 0, 14)
+    Knob.Position = UDim2.new((default - min) / (max - min), -7, 0.5, -7)
+    Knob.BackgroundColor3 = Color3.fromRGB(180, 100, 255)
+    Knob.Parent = Bar
+    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1, 0)
+
+    local dragging = false
+
+    Bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local mouseX = input.Position.X
+            local barPos = Bar.AbsolutePosition.X
+            local barSize = Bar.AbsoluteSize.X
+            local percent = math.clamp((mouseX - barPos) / barSize, 0, 1)
+            local value = math.floor(min + (max - min) * percent)
+
+            Fill.Size = UDim2.new(percent, 0, 1, 0)
+            Knob.Position = UDim2.new(percent, -7, 0.5, -7)
+            Label.Text = text .. ": " .. value
+
+            if callback then callback(value) end
+        end
     end)
 end
 
--- ==========================================
--- 4. СОЗДАНИЕ ВКЛАДОК И КНОПОК
--- ==========================================
-
--- Вкладка 1: Farm
+-- Создание вкладок
 local FarmPage = CreateTab("AutoFarm", "🪙")
 AddToggle(FarmPage, "Включить автофарм", "FarmEnabled", function(val)
     if val then
@@ -228,16 +402,16 @@ AddToggle(FarmPage, "Включить автофарм", "FarmEnabled", function
         if CurrentTween then CurrentTween:Cancel() end
     end
 end)
-AddSpeedButton(FarmPage)
+AddSlider(FarmPage, "Скорость полета", 10, 100, Settings.FlySpeed, function(val)
+    Settings.FlySpeed = val
+end)
 
--- Вкладка 2: Roles
 local RolePage = CreateTab("Роли", "🎭")
 AddToggle(RolePage, "Подбор пистолета (Невиновный)", "AutoGun")
 AddToggle(RolePage, "Стрельба в убийцу (Шериф)", "AutoShoot")
 AddToggle(RolePage, "Убить всех (Убийца/Зомби)", "KillAll")
 AddToggle(RolePage, "Магнит (Инфекция)", "Magnet")
 
--- Вкладка 3: Performance
 local PerfPage = CreateTab("Графика", "⚙️")
 AddToggle(PerfPage, "Пластиковый мир", "PlasticMode", function(val)
     if val then
@@ -278,20 +452,10 @@ AddToggle(PerfPage, "Серое небо", "GreySky", function(val)
     end
 end)
 
--- Вкладка 4: Settings
 local SetPage = CreateTab("Настройки", "🛠")
 AddToggle(SetPage, "Noclip", "Noclip")
 
--- Автовыбор первой вкладки
-for _, child in ipairs(TabBar:GetChildren()) do
-    if child:IsA("TextButton") then
-        child.MouseButton1Click:Fire() -- Активируем первую вкладку при загрузке (нужно вызвать событие)
-        -- Обычный FireEvent не сработает для MouseButton1Click, сделаем вручную:
-        break
-    end
-end
--- Принудительно открываем Farm
-for _, p in pairs(Pages) do p.Visible = false end
+-- Открываем первую вкладку (без Fire!)
 Pages["AutoFarm"].Visible = true
 for _, child in ipairs(TabBar:GetChildren()) do
     if child:IsA("TextButton") and string.find(child.Text, "AutoFarm") then
@@ -301,145 +465,8 @@ for _, child in ipairs(TabBar:GetChildren()) do
 end
 
 -- ==========================================
--- 5. ЛОГИКА (Без изменений, копия v7.0)
+-- 5. NOCLIP / PHYSICS
 -- ==========================================
-local function getRole()
-    local hasKnife, hasGun = false, false
-    for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
-        local n = string.lower(tool.Name)
-        if n:find("knife") then hasKnife = true end
-        if n:find("gun") or n:find("revolver") then hasGun = true end
-    end
-    local char = LocalPlayer.Character
-    if char then
-        for _, tool in ipairs(char:GetChildren()) do
-            if tool:IsA("Tool") then
-                local n = string.lower(tool.Name)
-                if n:find("knife") then hasKnife = true end
-                if n:find("gun") or n:find("revolver") then hasGun = true end
-            end
-        end
-    end
-    local totalKnives, totalGuns = 0, 0
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Backpack then
-            if plr.Backpack:FindFirstChild("Knife") then totalKnives = totalKnives + 1 end
-            if plr.Backpack:FindFirstChild("Gun") then totalGuns = totalGuns + 1 end
-        end
-    end
-    isInfection = (totalKnives >= 2 or totalGuns >= 2)
-    if hasKnife then currentRole = isInfection and "Zombie" or "Murderer"
-    elseif hasGun then currentRole = isInfection and "Survivor" or "Sheriff"
-    else currentRole = "Innocent" end
-end
-
-local function getMap()
-    for _, v in pairs(Workspace:GetDescendants()) do
-        if v.Name == "Spawns" and v.Parent.Name ~= "Lobby" then return v.Parent end
-    end
-    return nil
-end
-
-local function getCoinContainer()
-    local map = getMap()
-    if not map then return nil end
-    return map:FindFirstChild("CoinContainer") or map:FindFirstChild("CandyContainer")
-end
-
-function startFarm()
-    if AutoFarmThread then task.cancel(AutoFarmThread) end
-    AutoFarmThread = task.spawn(function()
-        while Settings.FarmEnabled do
-            local container = getCoinContainer()
-            local char = LocalPlayer.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if container and hrp then
-                local nearestPart, nearestItem, shortestDist = nil, nil, math.huge
-                for _, item in ipairs(container:GetChildren()) do
-                    if not VisitedCoins[item] then
-                        local part = item:FindFirstChild("CoinVisual") or item
-                        if part and part:IsA("BasePart") and part.Transparency < 0.5 then
-                            local dist = (hrp.Position - part.Position).Magnitude
-                            if dist < shortestDist and dist < 300 then
-                                shortestDist = dist; nearestPart = part; nearestItem = item
-                            end
-                        end
-                    end
-                end
-                if nearestPart then
-                    local duration = math.clamp(shortestDist / Settings.FlySpeed, 0.05, 3)
-                    CurrentTween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = CFrame.new(nearestPart.Position)})
-                    CurrentTween:Play()
-                    task.wait(duration + 0.1)
-                    VisitedCoins[nearestItem] = true
-                    collectedCount = collectedCount + 1
-                    task.wait(0.1)
-                else task.wait(0.5) end
-            else task.wait(0.5) end
-        end
-    end)
-end
-
-function startRoleLogic()
-    if RoleLogicThread then task.cancel(RoleLogicThread) end
-    RoleLogicThread = task.spawn(function()
-        while Settings.FarmEnabled do
-            task.wait(0.5)
-            getRole()
-            if collectedCount >= Settings.CoinLimit then
-                -- 1. УБИЙЦА / ЗОМБИ (Магнит)
-                if (currentRole == "Murderer" or currentRole == "Zombie") and Settings.KillAll then
-                    for _, plr in pairs(Players:GetPlayers()) do
-                        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                            LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
-                            task.wait(0.05)
-                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                            task.wait(0.2)
-                        end
-                    end
-                end
-                -- 2. ШЕРИФ
-                if currentRole == "Sheriff" and Settings.AutoShoot then
-                    for _, plr in pairs(Players:GetPlayers()) do
-                        if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
-                            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, plr.Character.HumanoidRootPart.Position)
-                            task.wait(0.1)
-                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                        end
-                    end
-                end
-                -- 3. НЕВИНОВНЫЙ
-                if currentRole == "Innocent" and Settings.AutoGun then
-                    local gunDrop = Workspace:FindFirstChild("Normal") and Workspace.Normal:FindFirstChild("GunDrop")
-                    if gunDrop then
-                        LocalPlayer.Character.HumanoidRootPart.CFrame = gunDrop.CFrame
-                        task.wait(0.2)
-                        for _, plr in pairs(Players:GetPlayers()) do
-                            if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
-                                LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, plr.Character.HumanoidRootPart.Position)
-                                VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                                VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                            end
-                        end
-                    end
-                end
-                -- 4. ВЫЖИВШИЙ
-                if currentRole == "Survivor" then
-                    for _, plr in pairs(Players:GetPlayers()) do
-                        if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
-                            LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
-                            task.wait(0.5)
-                            break
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
-
 RunService.Stepped:Connect(function()
     if Settings.FarmEnabled and LocalPlayer.Character then
         local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -452,4 +479,4 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-print("[Iroshida v8.0] Загружен! Все системы в норме.")
+print("[Iroshida v8.1] Загружен! Автофарм готов к работе.")
