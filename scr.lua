@@ -1,5 +1,5 @@
 -- ==========================================
--- IROSHIDA v2.1 (Fixed & Performance Build)
+-- IROSHIDA v2.2 (Smart Cache & Fixed Farm)
 -- Script made by Nick9l
 -- ==========================================
 
@@ -49,9 +49,9 @@ local Settings = {
     KillAll = true,
     Magnet = false,
     FarmExp = true,
-    InnocentTimeout = 35, -- Секунды ожидания пистолета
+    InnocentTimeout = 35,
     
-    Noclip = true, -- Включен по умолчанию для фарма
+    Noclip = true,
     RamMode = "Off",
     RamInterval = 30
 }
@@ -59,7 +59,7 @@ local Settings = {
 local currentCoins = 0
 local isInfection = false
 local myRole = "Innocent" 
-local collectedCoins = {} -- Таблица для защиты от дублирования монет
+local collectedCoins = {}
 
 -- ==========================================
 -- 3. ЗАГРУЗКА UI (LINORIA)
@@ -70,7 +70,7 @@ local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
 local Window = Library:CreateWindow({
-    Title = 'Iroshida v2.1',
+    Title = 'Iroshida v2.2',
     Center = true,
     AutoShow = true,
     TabPadding = 8,
@@ -112,28 +112,30 @@ local function updateGameState()
 end
 
 -- ==========================================
--- 5. УНИВЕРСАЛЬНЫЙ ПОИСК (С защитой от повторного сбора)
+-- 5. УМНЫЙ ПОИСК (Кэширование без лагов)
 -- ==========================================
 local cachedCoinContainer = nil
+local lastSearchTime = 0
 
 local function getClosestItem(mode)
-    if not cachedCoinContainer or not cachedCoinContainer.Parent then
-        cachedCoinContainer = nil
-        for _, obj in pairs(Workspace:GetDescendants()) do
-            if obj.Name == "CoinContainer" or obj.Name == "CandyContainer" or obj.Name == "Coins" or obj.Name == "Normal" then
-                if obj.Name == "Normal" then
-                    local container = obj:FindFirstChild("CoinContainer") or obj:FindFirstChild("CandyContainer")
-                    if container then cachedCoinContainer = container; break end
-                else
-                    cachedCoinContainer = obj; break
-                end
-            elseif obj.Name == "Coin" or obj.Name == "Candy" or obj.Name == "Beachball" then
-                cachedCoinContainer = obj.Parent; break
-            end
-        end
-    end
+    if not Settings.FarmEnabled then return nil end
 
-    if not cachedCoinContainer then return nil end
+    -- Если кэш пуст или папка исчезла (новый раунд), ищем заново
+    if not cachedCoinContainer or not cachedCoinContainer.Parent then
+        -- Ограничиваем поиск: не чаще 1 раза в 2 секунды, чтобы не лагало в лобби
+        if tick() - lastSearchTime < 2 then return nil end
+        lastSearchTime = tick()
+
+        cachedCoinContainer = nil
+        local normal = Workspace:FindFirstChild("Normal")
+        if normal then
+            cachedCoinContainer = normal:FindFirstChild("CoinContainer") 
+                               or normal:FindFirstChild("CandyContainer") 
+                               or normal:FindFirstChild("Coins")
+        end
+        
+        if not cachedCoinContainer then return nil end
+    end
 
     local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
@@ -165,7 +167,7 @@ local function getClosestItem(mode)
 end
 
 -- ==========================================
--- 6. МОДУЛЬ ПОЛЕТА (ФАРМ БЕЗ ЛАГОВ)
+-- 6. МОДУЛЬ ПОЛЕТА (ФАРМ С ФИЗИЧЕСКИМ СБОРОМ)
 -- ==========================================
 local flyConnection = nil
 local currentTarget = nil
@@ -196,7 +198,6 @@ local function startFarmLoop()
             return
         end
 
-        -- Ищем цель раз в 0.5 сек (для оптимизации)
         targetSearchTimer = targetSearchTimer + deltaTime
         if targetSearchTimer > 0.5 or not currentTarget or not currentTarget.Parent then
             currentTarget = getClosestItem(Settings.FarmMode)
@@ -204,16 +205,24 @@ local function startFarmLoop()
         end
         
         if currentTarget and hrp then
-            local direction = (currentTarget.Position - hrp.Position).Unit
-            bv.Velocity = direction * Settings.FlySpeed
+            local distance = (currentTarget.Position - hrp.Position).Magnitude
             
-            -- Сбор монеты (защита от спама)
-            if (currentTarget.Position - hrp.Position).Magnitude < 5 then
+            -- Если мы вплотную к монете (меньше 3 стадов)
+            if distance < 3 then
                 if not collectedCoins[currentTarget] then
                     collectedCoins[currentTarget] = true
                     currentCoins = currentCoins + 1 
+                    
+                    -- ФИЗИЧЕСКИЙ СБОР (Телепорт в центр монеты для срабатывания Touch)
+                    hrp.CFrame = currentTarget.CFrame
+                    
                     currentTarget = nil 
                 end
+            else
+                local direction = (currentTarget.Position - hrp.Position).Unit
+                -- Ограничиваем скорость, чтобы не пролетать насквозь
+                local speed = math.min(Settings.FlySpeed, distance * 5)
+                bv.Velocity = direction * speed
             end
         else
             bv.Velocity = Vector3.new(0, 0, 0)
@@ -230,7 +239,6 @@ local function handleRoleLogic()
             task.wait(0.5)
             updateGameState()
 
-            -- Ждем, пока нафармит лимит
             if currentCoins < Settings.CoinLimit then continue end 
 
             if not isInfection then
@@ -524,4 +532,4 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
 
-print("[Iroshida v2.1] Загружен успешно!")
+print("[Iroshida v2.2] Загружен успешно!")
