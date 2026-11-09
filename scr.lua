@@ -1,179 +1,174 @@
 -- ==========================================
--- IROSHIDA v10.0
--- Engine: HYBRID (HappyHub farm/roles + ELITE ESP + PROTO config)
--- UI: свой (Iroshida v9)
+-- IROSHIDA v11.0 · Farm-first rebuild
+-- Farm engine: Happy Hub MM2 (open source) 1:1
+-- Memory: connection registry, purge, watchdog
 -- ==========================================
-
-local Players            = game:GetService("Players")
-local RunService         = game:GetService("RunService")
-local TweenService       = game:GetService("TweenService")
-local UserInputService   = game:GetService("UserInputService")
-local Workspace          = game:GetService("Workspace")
-local Lighting           = game:GetService("Lighting")
-local ReplicatedStorage  = game:GetService("ReplicatedStorage")
-local HttpService        = game:GetService("HttpService")
-local VirtualUser        = game:GetService("VirtualUser")
-
-local LocalPlayer = Players.LocalPlayer
-local Camera      = Workspace.CurrentCamera
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
--- ==========================================
--- 1. CONFIG (PROTO)
--- ==========================================
-local ConfigFile = "Iroshida_v10.json"
-local AutoExecFile = "Iroshida_v10_auto.lua"
+local Players            = game:GetService("Players")
+local RunService         = game:GetService("RunService")
+local UserInputService   = game:GetService("UserInputService")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local Workspace          = game:GetService("Workspace")
+local Lighting           = game:GetService("Lighting")
+local VirtualUser        = game:GetService("VirtualUser")
 
-local Settings = {
-    -- Farm
-    FarmEnabled    = false,
-    FarmSpeed      = 26,
-    CoinLimit      = 50,
-    AutoEvade      = true,
-    EvadeRadius    = 22,
-
-    -- Roles
-    KillAll        = false,   -- Murderer: kill everyone
-    AutoShoot      = false,   -- Sheriff: shoot murderer
-    AutoGun        = false,   -- Innocent: grab gun
-
-    -- Movement
-    FlyEnabled     = false,
-    FlySpeed       = 50,
-    Noclip         = true,
-    AntiVoid       = true,
-    AntiAFK        = true,
-
-    -- Visuals
-    RoleESP        = false,
-    CoinESP        = false,
-    GunESP         = false,
-    ShowTracer     = false,
-
-    -- Performance
-    PlasticMode    = false,
-    KillShadows    = false,
-
-    -- Meta
-    AutoExec       = true,
-}
-
-local function SaveConfig()
-    if not writefile then return end
-    pcall(function()
-        writefile(ConfigFile, HttpService:JSONEncode(Settings))
-    end)
-end
-
-local function LoadConfig()
-    if not (isfile and readfile and isfile(ConfigFile)) then return end
-    pcall(function()
-        local data = HttpService:JSONDecode(readfile(ConfigFile))
-        if type(data) == "table" then
-            for k, v in pairs(data) do
-                if Settings[k] ~= nil then Settings[k] = v end
-            end
-        end
-    end)
-end
-
-LoadConfig()
+local LocalPlayer = Players.LocalPlayer
 
 -- ==========================================
--- 2. AUTO-EXEC ON TELEPORT (PROTO)
+-- 0. CLEANUP ОТ ПРОШЛОГО ЗАПУСКА
 -- ==========================================
-local QueueTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
-if QueueTeleport then
-    LocalPlayer.OnTeleport:Connect(function()
-        if not Settings.AutoExec then return end
+do
+    local old = getgenv and getgenv().__IROSHIDA_STATE
+    if old then
         pcall(function()
-            if isfile and isfile(AutoExecFile) then
-                QueueTeleport('if readfile and isfile("' .. AutoExecFile .. '") then loadstring(readfile("' .. AutoExecFile .. '"))() end')
+            for _, c in ipairs(old.connections or {}) do
+                if c and c.Disconnect then c:Disconnect() end
+            end
+            for _, t in ipairs(old.threads or {}) do
+                if t then pcall(task.cancel, t) end
+            end
+            for _, g in ipairs(old.guis or {}) do
+                if g then g:Destroy() end
             end
         end)
-    end)
+        if getgenv then getgenv().__IROSHIDA_STATE = nil end
+        task.wait(0.2)
+    end
 end
 
--- ==========================================
--- 3. STATE + CONNECTION REGISTRY (Happy Hub)
--- ==========================================
-local Connections = {}
-local Threads     = {}
+getgenv().__IROSHIDA_STATE = { connections = {}, threads = {}, guis = {} }
+
+local Registry = {}
 
 local function trackConn(key, conn)
-    if not conn then return conn end
+    if not conn then return nil end
     if key then
-        if Connections[key] then pcall(function() Connections[key]:Disconnect() end) end
-        Connections[key] = conn
+        if Registry[key] then
+            pcall(function() Registry[key]:Disconnect() end)
+        end
+        Registry[key] = conn
     end
+    local list = getgenv().__IROSHIDA_STATE.connections
+    if #list > 100 then
+        local alive = {}
+        for _, c in ipairs(list) do
+            if c then
+                local ok, connected = pcall(function() return c.Connected end)
+                if ok and connected then alive[#alive + 1] = c end
+            end
+        end
+        getgenv().__IROSHIDA_STATE.connections = alive
+    end
+    table.insert(list, conn)
     return conn
 end
 
 local function dropConn(key)
-    if Connections[key] then
-        pcall(function() Connections[key]:Disconnect() end)
-        Connections[key] = nil
+    if Registry[key] then
+        pcall(function() Registry[key]:Disconnect() end)
+        Registry[key] = nil
     end
 end
 
 local function trackThread(t)
-    if t then table.insert(Threads, t) end
+    if t then
+        local list = getgenv().__IROSHIDA_STATE.threads
+        if #list > 40 then
+            local alive = {}
+            for _, th in ipairs(list) do
+                if th then
+                    local ok, status = pcall(function() return coroutine.status(th) end)
+                    if ok and status ~= "dead" then alive[#alive + 1] = th end
+                end
+            end
+            getgenv().__IROSHIDA_STATE.threads = alive
+        end
+        table.insert(list, t)
+    end
     return t
 end
 
-local S = {
-    roleCache       = {},   -- [plr] = { Role = "Murderer"/"Sheriff"/"Hero"/"Innocent", Dead = bool }
-    roundActive     = false,
-    roundStartedAt  = 0,
-    totalCoins      = 0,
-    bagProgress     = {},
-
-    -- Farm
-    farmBV          = nil,
-    farmGyro        = nil,
-    farmTarget      = nil,
-    farmTargetAt    = 0,
-    farmBlacklist   = {},   -- [coin] = tick
-    farmTouched     = {},   -- [coin] = tick
-
-    -- Fly
-    flyBV           = nil,
-    flyBG           = nil,
-    flyConn         = nil,
-    mobileFlyDragging = false,
-    mobileFlyVec    = Vector3.zero,
-
-    -- Combat
-    lastKillTick    = 0,
-    lastShotTick    = 0,
-    killAllRunning  = false,
-
-    -- Anti-void
-    lastSafeCFrame  = nil,
-
-    -- ESP
-    highlights      = {},   -- [plr] = Highlight
-    coinTags        = {},   -- [coin] = Drawing.Text
-    gunTag          = nil,
-
-    -- Tracer
-    tracer          = nil,
-}
-
-if Drawing then
-    local ok, ln = pcall(function() return Drawing.new("Line") end)
-    if ok and ln then
-        S.tracer = ln
-        S.tracer.Thickness = 1.5
-        S.tracer.Color = Color3.fromRGB(180, 100, 255)
-        S.tracer.Transparency = 0.4
-        S.tracer.Visible = false
-    end
+local function trackGui(g)
+    if g then table.insert(getgenv().__IROSHIDA_STATE.guis, g) end
+    return g
 end
 
 -- ==========================================
--- 4. HELPERS
+-- 1. НАСТРОЙКИ
+-- ==========================================
+local Settings = {
+    -- Farm (главное)
+    FarmEnabled      = false,
+    CoinLimit        = 50,
+
+    -- Movement (обвес)
+    FlyEnabled       = false,
+    FlySpeed         = 40,
+    Noclip           = true,
+    AntiAFK          = true,
+    AntiVoid         = true,
+
+    -- Combat (обвес, минимальный)
+    KillAll          = false,
+    AutoShoot        = false,
+    AutoGun          = false,
+}
+
+-- ==========================================
+-- 2. STATE
+-- ==========================================
+local S = {
+    -- Round
+    roundActive      = false,
+    roundStartedAt   = 0,
+    roleCache        = {},
+    bagProgress      = {},
+    totalCoins       = 0,
+
+    -- Farm (Happy Hub 1:1)
+    coinCollecting       = false,
+    coinConnection       = nil,
+    coinGyro             = nil,
+    farmWalkBV           = nil,
+    farmTargetCoin       = nil,
+    farmTouchedCoins     = {},
+    farmBlacklist        = {},
+    farmLastCollectAt    = 0,
+    farmStartedAt        = 0,
+    farmLastFallbackAt   = 0,
+    farmStuckPos         = nil,
+    farmStuckAt          = 0,
+    farmLastCollectSpeedAt = 0,
+    farmTargetStartedAt  = 0,
+    lastGyroUpdate       = 0,
+    lastCollectTime      = 0,
+    savedFarmStates      = nil,
+
+    -- Movement
+    flyBV                = nil,
+    flyBG                = nil,
+    flyConn              = nil,
+
+    -- Anti-void
+    lastSafeCFrame       = nil,
+
+    -- Combat
+    lastKillTick         = 0,
+    lastShotTick         = 0,
+
+    -- UI setters (создаются в UI)
+    coinCountSetter      = nil,
+    coinStatusSetter     = nil,
+}
+
+local MurdererCache     = { plr = nil, time = 0 }
+local TargetVisibility  = {}
+local VisCache          = {}
+
+-- ==========================================
+-- 3. БАЗОВЫЕ ХЕЛПЕРЫ
 -- ==========================================
 local function getHRP(plr)
     plr = plr or LocalPlayer
@@ -192,78 +187,85 @@ local function isAlive(plr)
     return h and h.Health > 0
 end
 
-local function hasTool(plr, toolName)
-    if not plr then return false end
-    toolName = string.lower(toolName)
-    local char = plr.Character
-    local bp = plr:FindFirstChildOfClass("Backpack")
-    for _, container in ipairs({char, bp}) do
-        if container then
-            for _, t in ipairs(container:GetChildren()) do
-                if t:IsA("Tool") and string.lower(t.Name):find(toolName, 1, true) then
-                    return true, t
-                end
-            end
+local function hasToolByName(parent, toolName)
+    if not parent then return false end
+    for _, child in ipairs(parent:GetChildren()) do
+        if child:IsA("Tool") then
+            local name = child.Name:lower()
+            if name == toolName:lower() or name:find(toolName:lower(), 1, true) then return true end
         end
     end
-    return false, nil
+    return false
 end
 
 -- ==========================================
--- 5. ROLE DETECTION (Happy Hub)
+-- 4. РОЛИ (из ролевого кэша + Knife fallback)
 -- ==========================================
-local function getMM2Role(plr)
-    if plr == LocalPlayer then return "Local" end
-    local cached = S.roleCache[plr]
-    if cached and cached.Role then return cached.Role end
+local function getRoleFromCache(plr)
+    local info = S.roleCache[plr.Name]
+    if info and info.Role then return info.Role end
+    return nil
+end
 
-    local hasKnife = hasTool(plr, "knife")
-    local hasGun = hasTool(plr, "gun") or hasTool(plr, "revolver") or hasTool(plr, "pistol")
-    if hasKnife then return "Murderer" end
-    if hasGun then
-        -- если sheriff уже мёртв — этот с пушкой Hero
-        local sheriffDead = false
-        for p, info in pairs(S.roleCache) do
-            if info.Role == "Sheriff" and info.Dead then sheriffDead = true; break end
-            if info.Role == "Sheriff" and p ~= plr then sheriffDead = false; break end
-        end
-        if sheriffDead then return "Hero" end
-        return "Sheriff"
+local function isLocalMurderer()
+    local cached = getRoleFromCache(LocalPlayer)
+    if cached == "Murderer" then return true end
+    local char = LocalPlayer.Character
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife")) then
+        return true
     end
-    return "Innocent"
+    return false
 end
 
 local function getMurderer()
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and getMM2Role(plr) == "Murderer" and isAlive(plr) then
-            return plr
+        if plr ~= LocalPlayer then
+            if getRoleFromCache(plr) == "Murderer" then return plr end
         end
     end
-    return nil
-end
-
-local function getSheriff()
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
-            local r = getMM2Role(plr)
-            if (r == "Sheriff" or r == "Hero") and isAlive(plr) then return plr end
+            local char = plr.Character
+            local bp = plr:FindFirstChild("Backpack")
+            if (char and char:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife")) then
+                return plr
+            end
         end
     end
     return nil
 end
 
-local function isLocalMurderer() return hasTool(LocalPlayer, "knife") end
-local function isLocalSheriff()  return hasTool(LocalPlayer, "gun") or hasTool(LocalPlayer, "revolver") end
+local MURDERER_TTL = 0.4
+
+local function getMurdererCached()
+    local now = tick()
+    local cached = MurdererCache.plr
+    if cached and cached.Parent and cached.Character and (now - MurdererCache.time) < MURDERER_TTL then
+        return cached
+    end
+    local fresh = getMurderer()
+    MurdererCache.plr = fresh
+    MurdererCache.time = now
+    return fresh
+end
+
+local function markRoundStarted()
+    if S.roundStartedAt == 0 or (tick() - S.roundStartedAt) > 15 then
+        S.roundStartedAt = tick()
+    end
+end
 
 -- ==========================================
--- 6. FADE EVENT HOOK (роли от сервера)
+-- 5. FADE EVENT (роли с сервера)
 -- ==========================================
 local function hookFade()
     dropConn("fade")
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local gameplay = remotes and remotes:FindFirstChild("Gameplay")
     local fade = gameplay and gameplay:FindFirstChild("Fade")
-    if not fade then return end
+    if not fade or not fade:IsA("RemoteEvent") then return end
+
     trackConn("fade", fade.OnClientEvent:Connect(function(data)
         if type(data) ~= "table" then return end
         for username, info in pairs(data) do
@@ -273,158 +275,74 @@ local function hookFade()
                     if p.Name == username then plr = p; break end
                 end
                 if plr then
-                    S.roleCache[plr] = {
-                        Role = info.Role,
-                        Dead = info.Dead or false,
-                    }
+                    S.roleCache[plr] = { Role = info.Role, Dead = info.Dead or false }
                 end
             end
         end
-        refreshAllESP()
     end))
 end
 
 -- ==========================================
--- 7. SPLASH
+-- 6. FARM (Happy Hub 1:1)
 -- ==========================================
-local Splash = Instance.new("ScreenGui")
-Splash.IgnoreGuiInset = true
-Splash.Parent = LocalPlayer:WaitForChild("PlayerGui")
+local FARM_GOAL                = Settings.CoinLimit or 50
+local FARM_TOUCH_RADIUS        = 25
+local FARM_ARRIVE_DIST         = 5
+local FARM_FLY_SPEED           = 21
+local FARM_DANGER_DIST         = 20
+local FARM_GROUND_OFFSET       = -1.5
+local FARM_TOUCH_COOLDOWN      = 0.28
+local FARM_FALLBACK_TIMEOUT    = 14
+local FARM_FALLBACK_COOLDOWN   = 3.5
+local FARM_STUCK_TIME          = 3.0
+local FARM_STUCK_DIST          = 2.5
+local FARM_SLOW_RADIUS         = 15
+local FARM_SLOW_AMOUNT         = 3
+local FARM_COLLECT_SPEED_RESET_TIME = 0.5
+local FARM_BLACKLIST_TIME      = 5
+local FARM_TARGET_TIMEOUT      = 8
 
-local SplashText = Instance.new("TextLabel")
-SplashText.Size = UDim2.new(1, 0, 1, 0)
-SplashText.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-SplashText.Text = "Привет."
-SplashText.TextColor3 = Color3.fromRGB(255, 255, 255)
-SplashText.Font = Enum.Font.GothamBold
-SplashText.TextSize = 32
-SplashText.Parent = Splash
-
-task.wait(0.7)
-SplashText.Text = "Iroshida v10.0"
-task.wait(0.7)
-SplashText.Text = "Загрузка..."
-task.wait(0.4)
-Splash:Destroy()
-
--- ==========================================
--- 8. FLY (Happy Hub адаптация)
--- ==========================================
-local MOBILE = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
-local function attachFly()
-    local hrp, hum = getHRP(), getHum()
-    if not hrp or not hum then return end
-    hum.PlatformStand = true
-    if S.flyBV then S.flyBV:Destroy() end
-    if S.flyBG then S.flyBG:Destroy() end
-    S.flyBV = Instance.new("BodyVelocity")
-    S.flyBV.Velocity = Vector3.zero
-    S.flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    S.flyBV.Parent = hrp
-    S.flyBG = Instance.new("BodyGyro")
-    S.flyBG.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-    S.flyBG.P = 1e4
-    S.flyBG.CFrame = hrp.CFrame
-    S.flyBG.Parent = hrp
-end
-
-local function detachFly()
-    if S.flyBV then S.flyBV:Destroy(); S.flyBV = nil end
-    if S.flyBG then S.flyBG:Destroy(); S.flyBG = nil end
-    local hum = getHum()
-    if hum then hum.PlatformStand = false end
-end
-
-local function getFlyInput()
-    local mv = Vector3.zero
-    if MOBILE then
-        if S.mobileFlyDragging and S.mobileFlyVec.Magnitude > 0.1 then mv = S.mobileFlyVec end
-        return mv
-    end
-    local cf = Camera.CFrame
-    if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv += cf.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv -= cf.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv -= cf.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv += cf.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then mv += Vector3.yAxis end
-    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then mv -= Vector3.yAxis end
-    return mv
-end
-
-local function startFly()
-    dropConn("fly")
-    attachFly()
-    trackConn("fly", RunService.Heartbeat:Connect(function()
-        if not Settings.FlyEnabled then return end
-        local hrp = getHRP()
-        if not hrp then return end
-        if not S.flyBV or not S.flyBV.Parent then attachFly() end
-        if not S.flyBV then return end
-        local mv = getFlyInput()
-        S.flyBV.Velocity = mv.Magnitude > 0 and mv.Unit * Settings.FlySpeed or Vector3.zero
-        S.flyBG.CFrame = Camera.CFrame
-        -- пауза фарма: не двигаем hrp одновременно
-        if S.farmBV then S.farmBV.Velocity = Vector3.zero end
-    end))
-end
-
-local function stopFly() dropConn("fly"); detachFly() end
-
-if MOBILE then
-    local dragStart
-    UserInputService.TouchStarted:Connect(function(i, gp)
-        if gp or not Settings.FlyEnabled then return end
-        dragStart = i.Position
-        S.mobileFlyDragging = true
-    end)
-    UserInputService.TouchMoved:Connect(function(i, gp)
-        if gp or not S.mobileFlyDragging or not Settings.FlyEnabled then return end
-        local d = i.Position - dragStart
-        S.mobileFlyVec = Camera.CFrame.LookVector * (-d.Y * 0.05)
-                       + Camera.CFrame.RightVector * (d.X * 0.05)
-    end)
-    UserInputService.TouchEnded:Connect(function()
-        S.mobileFlyDragging = false
-        S.mobileFlyVec = Vector3.zero
-    end)
-end
-
-UserInputService.InputBegan:Connect(function(i, gp)
-    if gp then return end
-    if i.KeyCode == Enum.KeyCode.F then
-        Settings.FlyEnabled = not Settings.FlyEnabled
-        if Settings.FlyEnabled then startFly() else stopFly() end
-        if UI and UI.refreshFlyToggle then UI.refreshFlyToggle() end
-        SaveConfig()
-    end
-end)
-
--- ==========================================
--- 9. FARM (Happy Hub — BodyVelocity + firetouchinterest)
--- ==========================================
-local FARM_RADIUS       = 25
-local FARM_ARRIVE       = 5
-local FARM_STUCK_TIME   = 3
-local FARM_STUCK_DIST   = 2.5
-local FARM_BLACKLIST    = 5
-local FARM_TARGET_TTL   = 8
-local FARM_TOUCH_CD     = 0.28
+local MAP_NAMES = {
+    "ResearchFacility","House2","Mansion2","Hotel","MilBase","Bank2",
+    "BioLab","Factory","Workplace","PoliceStation","Office3",
+    "Hospital3","Town","Town2","Mansion","House",
+}
 
 local function getCoinContainer()
-    local maps = {
-        "ResearchFacility","House2","Mansion2","Hotel","MilBase","Bank2",
-        "BioLab","Factory","Workplace","PoliceStation","Office3",
-        "Hospital3","Town","Town2","Mansion","House",
-    }
-    for _, name in ipairs(maps) do
-        local m = Workspace:FindFirstChild(name)
-        if m then
-            local c = m:FindFirstChild("CoinContainer", true)
+    for _, mapName in ipairs(MAP_NAMES) do
+        local map = Workspace:FindFirstChild(mapName)
+        if map then
+            local c = map:FindFirstChild("CoinContainer", true)
             if c then return c end
         end
     end
-    return Workspace:FindFirstChild("CoinContainer", true)
+    local c = Workspace:FindFirstChild("CoinContainer", true)
+    if c then return c end
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:IsA("Model") and (child.Name:find("Map") or child.Name:find("map")) then
+            local c2 = child:FindFirstChild("CoinContainer", true)
+            if c2 then return c2 end
+        end
+    end
+    return nil
+end
+
+local function getAllCoins()
+    local cc = getCoinContainer()
+    if not cc then return {} end
+    local coins = {}
+    for _, child in ipairs(cc:GetChildren()) do
+        local part
+        if child:IsA("BasePart") then
+            part = child
+        elseif child:IsA("Model") then
+            part = child.PrimaryPart or child:FindFirstChildWhichIsA("BasePart")
+        end
+        if part and part:IsA("BasePart") then
+            table.insert(coins, part)
+        end
+    end
+    return coins
 end
 
 local function isCoinValid(coin)
@@ -433,464 +351,430 @@ local function isCoinValid(coin)
     return coin:FindFirstChildWhichIsA("TouchTransmitter") ~= nil
 end
 
-local function isBlacklisted(coin)
+local function isCoinBlacklisted(coin)
     local t = S.farmBlacklist[coin]
     if not t then return false end
-    if tick() - t > FARM_BLACKLIST then S.farmBlacklist[coin] = nil; return false end
+    if tick() - t > FARM_BLACKLIST_TIME then
+        S.farmBlacklist[coin] = nil
+        return false
+    end
     return true
 end
 
-local function getAllCoins()
-    local c = getCoinContainer()
-    if not c then return {} end
-    local out = {}
-    for _, ch in ipairs(c:GetChildren()) do
-        local p
-        if ch:IsA("BasePart") then p = ch
-        elseif ch:IsA("Model") then p = ch.PrimaryPart or ch:FindFirstChildWhichIsA("BasePart") end
-        if p and p:IsA("BasePart") then table.insert(out, p) end
-    end
-    return out
+local function blacklistCoin(coin)
+    if coin then S.farmBlacklist[coin] = tick() end
 end
 
-local function attachFarmBody()
-    local hrp, hum = getHRP(), getHum()
+local function attachFarmGyro()
+    local hrp = getHRP()
     if not hrp then return end
-    if hum then hum.PlatformStand = true end
-    if not S.farmBV or not S.farmBV.Parent then
-        S.farmBV = Instance.new("BodyVelocity")
-        S.farmBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-        S.farmBV.P = 500
-        S.farmBV.Parent = hrp
-    end
-    if not S.farmGyro or not S.farmGyro.Parent then
-        S.farmGyro = Instance.new("BodyGyro")
-        S.farmGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-        S.farmGyro.P = 1e5
-        S.farmGyro.D = 500
-        S.farmGyro.CFrame = CFrame.new(hrp.Position)
-        S.farmGyro.Parent = hrp
+    if S.coinGyro then S.coinGyro:Destroy() end
+    S.coinGyro = Instance.new("BodyGyro")
+    S.coinGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+    S.coinGyro.P = 1e5
+    S.coinGyro.D = 500
+    S.coinGyro.CFrame = CFrame.new(hrp.Position)
+    S.coinGyro.Parent = hrp
+    S.lastGyroUpdate = tick()
+end
+
+local function ensureFarmBodyMovers()
+    local hrp = getHRP()
+    if not hrp then return end
+    local hum = getHum()
+    if hum and not hum.PlatformStand then hum.PlatformStand = true end
+    if not S.farmWalkBV or not S.farmWalkBV.Parent then
+        S.farmWalkBV = Instance.new("BodyVelocity")
+        S.farmWalkBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        S.farmWalkBV.P = 500
+        S.farmWalkBV.Parent = hrp
     end
 end
 
-local function detachFarmBody()
-    if S.farmBV then S.farmBV:Destroy(); S.farmBV = nil end
-    if S.farmGyro then S.farmGyro:Destroy(); S.farmGyro = nil end
+local function stopFarmBodyMovers()
+    if S.farmWalkBV then
+        S.farmWalkBV.Velocity = Vector3.zero
+        S.farmWalkBV:Destroy()
+        S.farmWalkBV = nil
+    end
     local hum = getHum()
     if hum then hum.PlatformStand = false end
-    S.farmTarget = nil
-    S.farmTouched = {}
+    local hrp = getHRP()
+    if hrp and hrp.Position.Y < -50 then
+        hrp.CFrame = hrp.CFrame + Vector3.new(0, 60, 0)
+    end
+end
+
+-- Farm helpers (save/restore Noclip/AntiAFK/AntiVoid)
+local function getHelperRefs(name)
+    if name == "AntiAFK"  then return Settings, "AntiAFK"  end
+    if name == "AntiVoid" then return Settings, "AntiVoid" end
+    if name == "Noclip"   then return Settings, "Noclip"   end
+    return nil, nil
+end
+
+local function ensureHelper(name)
+    local tbl, key = getHelperRefs(name)
+    if not tbl or not key then return end
+    S.savedFarmStates = S.savedFarmStates or {}
+    if S.savedFarmStates[name] == nil then
+        S.savedFarmStates[name] = { orig = tbl[key], forced = false }
+    end
+    local st = S.savedFarmStates[name]
+    if not tbl[key] then
+        tbl[key] = true
+        st.forced = true
+    end
+end
+
+local function restoreHelper(name)
+    local tbl, key = getHelperRefs(name)
+    if not tbl or not key then return end
+    S.savedFarmStates = S.savedFarmStates or {}
+    local st = S.savedFarmStates[name]
+    if not st or not st.forced then
+        S.savedFarmStates[name] = nil
+        return
+    end
+    if tbl[key] ~= st.orig then tbl[key] = st.orig end
+    S.savedFarmStates[name] = nil
+end
+
+local function ensureFarmHelpers()
+    ensureHelper("AntiAFK")
+    ensureHelper("AntiVoid")
+end
+
+local function restoreFarmHelpers()
+    restoreHelper("AntiAFK")
+    restoreHelper("AntiVoid")
+end
+
+local function ensureFarmNoclip()
+    if not S.roundActive then return end
+    ensureHelper("Noclip")
+end
+
+local function restoreFarmNoclip()
+    restoreHelper("Noclip")
+end
+
+-- Core: stop
+local function stopCoinCollector()
+    S.coinCollecting = false
+    if S.coinConnection then
+        pcall(function() S.coinConnection:Disconnect() end)
+        S.coinConnection = nil
+    end
+    if S.coinGyro then
+        pcall(function() S.coinGyro:Destroy() end)
+        S.coinGyro = nil
+    end
+    stopFarmBodyMovers()
+    S.farmTargetCoin = nil
+    S.farmTouchedCoins = {}
     S.farmBlacklist = {}
-end
-
-local function farmStep()
-    if not Settings.FarmEnabled then return end
-    if Settings.FlyEnabled then
-        -- полёт приоритетнее, фарм стоит
-        if S.farmBV then S.farmBV.Velocity = Vector3.zero end
-        return
-    end
+    S.farmLastCollectAt = 0
+    S.farmStartedAt = 0
+    S.farmLastFallbackAt = 0
+    S.farmStuckPos = nil
+    S.farmStuckAt = 0
+    S.farmLastCollectSpeedAt = 0
+    S.farmTargetStartedAt = 0
+    S.lastGyroUpdate = 0
+    if S.coinStatusSetter then S.coinStatusSetter("Idle") end
     local hrp = getHRP()
-    if not hrp then return end
-    if S.totalCoins >= Settings.CoinLimit then return end
-    if not S.farmBV or not S.farmBV.Parent then attachFarmBody() end
-    if not S.farmBV then return end
-
-    local now = tick()
-    local myPos = hrp.Position
-    local coins = getAllCoins()
-    S.farmGyro.CFrame = CFrame.new(myPos)
-
-    -- эвейд от убийцы
-    if Settings.AutoEvade and not isLocalMurderer() then
-        local m = getMurderer()
-        local mHRP = m and getHRP(m)
-        if mHRP and (mHRP.Position - myPos).Magnitude < Settings.EvadeRadius then
-            local away = Vector3.new(myPos.X - mHRP.Position.X, 0, myPos.Z - mHRP.Position.Z)
-            if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
-            S.farmBV.Velocity = away.Unit * Settings.FarmSpeed * 2 + Vector3.new(0, 4, 0)
-            return
-        end
-    end
-
-    -- touch ко всему в радиусе
-    for _, coin in ipairs(coins) do
-        if (coin.Position - myPos).Magnitude <= FARM_RADIUS then
-            local last = S.farmTouched[coin]
-            if not last or now - last > FARM_TOUCH_CD then
-                S.farmTouched[coin] = now
-                task.spawn(function()
-                    pcall(firetouchinterest, hrp, coin, 0)
-                    task.wait(0.02)
-                    if coin and coin.Parent then
-                        pcall(firetouchinterest, hrp, coin, 1)
-                    end
-                end)
-            end
-        end
-    end
-
-    -- чистим кэши
-    for c, t in pairs(S.farmTouched) do
-        if now - t > 5 or not c or not c.Parent then S.farmTouched[c] = nil end
-    end
-
-    -- таймаут цели
-    if S.farmTarget and (now - S.farmTargetAt) > FARM_TARGET_TTL then
-        S.farmBlacklist[S.farmTarget] = now
-        S.farmTarget = nil
-    end
-
-    -- выбор ближайшей
-    if not S.farmTarget or not S.farmTarget.Parent or not isCoinValid(S.farmTarget) then
-        S.farmTarget = nil
-        local best, bd = nil, math.huge
-        for _, coin in ipairs(coins) do
-            if isCoinValid(coin) and not isBlacklisted(coin) then
-                local d = (coin.Position - myPos).Magnitude
-                if d < bd then bd = d; best = coin end
-            end
-        end
-        if best then
-            S.farmTarget = best
-            S.farmTargetAt = now
-        end
-    end
-
-    local target = S.farmTarget
-    if not target then
-        S.farmBV.Velocity = Vector3.zero
-        return
-    end
-
-    local delta = target.Position + Vector3.new(0, -1.5, 0) - myPos
-    local hDist = (Vector3.new(delta.X, 0, delta.Z)).Magnitude
-    if hDist > 0.5 then
-        S.farmBV.Velocity = Vector3.new(delta.X, math.clamp(delta.Y * 2, -8, 8), delta.Z).Unit * math.min(Settings.FarmSpeed, hDist * 5)
-    else
-        S.farmBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
-    end
-
-    -- застревание
-    if not S._stuckPos then
-        S._stuckPos = myPos; S._stuckAt = now
-    elseif (myPos - S._stuckPos).Magnitude > FARM_STUCK_DIST then
-        S._stuckPos = myPos; S._stuckAt = now
-    elseif now - S._stuckAt > FARM_STUCK_TIME then
-        S.farmBlacklist[S.farmTarget] = now
-        S.farmTarget = nil
-        S._stuckPos = nil; S._stuckAt = 0
-    end
-
-    -- трассер
-    if Settings.ShowTracer and S.tracer and Camera then
-        local sp, on = Camera:WorldToViewportPoint(target.Position)
-        if on then
-            S.tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
-            S.tracer.To = Vector2.new(sp.X, sp.Y)
-            S.tracer.Visible = true
-        else
-            S.tracer.Visible = false
-        end
-    elseif S.tracer then
-        S.tracer.Visible = false
-    end
-end
-
--- ==========================================
--- 10. MURDERER (Happy Hub — через Knife remotes)
--- ==========================================
-local function getLocalKnife()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    for _, t in ipairs(char:GetChildren()) do
-        if t:IsA("Tool") and string.lower(t.Name):find("knife", 1, true) then return t end
-    end
-    return nil
-end
-
-local function equipKnife()
-    if getLocalKnife() then return true end
-    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-    if not bp then return false end
-    for _, t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") and string.lower(t.Name):find("knife", 1, true) then
-            local hum = getHum()
-            if hum then pcall(function() hum:EquipTool(t) end) end
-            task.wait(0.2)
-            return true
-        end
-    end
-    return false
-end
-
-local function murderTick()
-    if not (Settings.KillAll) then return end
-    if tick() - S.lastKillTick < 0.05 then return end
-    S.lastKillTick = tick()
-
-    local knife = getLocalKnife()
-    if not knife then
-        equipKnife()
-        knife = getLocalKnife()
-        if not knife then return end
-    end
-
-    local events = knife:FindFirstChild("Events")
-    local stab  = events and events:FindFirstChild("KnifeStabbed")
-    local touch = events and events:FindFirstChild("HandleTouched")
-    local handle = knife:FindFirstChild("Handle")
-
-    pcall(function() knife:Activate() end)
-    if stab then pcall(function() stab:FireServer() end) end
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and isAlive(plr) then
-            local hrp = getHRP(plr)
-            local head = plr.Character:FindFirstChild("Head")
-            if touch then
-                if hrp then pcall(function() touch:FireServer(hrp) end) end
-                if head then pcall(function() touch:FireServer(head) end) end
-            end
-            if handle then
-                if hrp then
-                    pcall(firetouchinterest, hrp, handle, 0)
-                    pcall(firetouchinterest, hrp, handle, 1)
-                    pcall(firetouchinterest, handle, hrp, 0)
-                    pcall(firetouchinterest, handle, hrp, 1)
-                end
-            end
-        end
-    end
-end
-
--- ==========================================
--- 11. SHERIFF (Happy Hub — через Shoot remote)
--- ==========================================
-local function getGun()
-    local char = LocalPlayer.Character
-    if char then
-        for _, t in ipairs(char:GetChildren()) do
-            if t:IsA("Tool") then
-                local n = string.lower(t.Name)
-                if n:find("gun") or n:find("revolver") or n:find("pistol") then return t end
-            end
-        end
-    end
-    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") then
-                local n = string.lower(t.Name)
-                if n:find("gun") or n:find("revolver") or n:find("pistol") then return t end
-            end
-        end
-    end
-    return nil
-end
-
-local function equipGun()
-    local char = LocalPlayer.Character
-    local gun = getGun()
-    if gun and gun.Parent == char then return gun end
-    if gun then
-        local hum = getHum()
-        if hum then pcall(function() hum:EquipTool(gun) end) end
-        task.wait(0.15)
-        return getGun()
-    end
-    return nil
-end
-
-local function shootAt(targetPlr)
-    local gun = equipGun()
-    if not gun then return false end
-    local targetHRP = getHRP(targetPlr)
-    if not targetHRP then return false end
-    local shoot = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
-    if not shoot then return false end
-    local origin = getHRP()
-    if not origin then return false end
-    local originCF = origin.CFrame
-    local targetCF = CFrame.new(targetHRP.Position)
-    if shoot:IsA("RemoteEvent") then
-        pcall(function() shoot:FireServer(originCF, targetCF) end)
-        return true
-    end
-    return false
-end
-
-local function sheriffTick()
-    if not Settings.AutoShoot then return end
-    if tick() - S.lastShotTick < 0.12 then return end
-    S.lastShotTick = tick()
-    local m = getMurderer()
-    if m then shootAt(m) end
-end
-
--- ==========================================
--- 12. INNOCENT (подбор пушки)
--- ==========================================
-local function findGunDrop()
-    return Workspace:FindFirstChild("GunDrop", true)
-end
-
-local function innocentTick()
-    if not Settings.AutoGun then return end
-    if isLocalSheriff() or isLocalMurderer() then return end
-    local gd = findGunDrop()
-    local hrp = getHRP()
-    if not (gd and hrp) then return end
-    if (gd.Position - hrp.Position).Magnitude > 5 then
-        hrp.CFrame = CFrame.new(gd.Position + Vector3.new(0, 2, 0))
-    end
-end
-
--- ==========================================
--- 13. NOCLIP / ANTI-VOID / ANTI-AFK
--- ==========================================
-local function noclipStep()
-    if not Settings.Noclip then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _, p in ipairs(char:GetDescendants()) do
-        if p:IsA("BasePart") then p.CanCollide = false end
-    end
-end
-
-local function antiVoidStep()
-    if not Settings.AntiVoid then return end
-    local hrp = getHRP()
-    if not hrp then S.lastSafeCFrame = nil; return end
-    if hrp.Position.Y >= 10 then
-        S.lastSafeCFrame = hrp.CFrame
-    elseif hrp.Position.Y <= -30 and S.lastSafeCFrame then
-        hrp.CFrame = S.lastSafeCFrame
+    if hrp then
         hrp.Velocity = Vector3.zero
         hrp.RotVelocity = Vector3.zero
     end
 end
 
--- Anti-AFK
-LocalPlayer.Idled:Connect(function()
-    if not Settings.AntiAFK then return end
-    VirtualUser:Button2Down(Vector2.new(0, 0), Camera.CFrame)
-    task.wait(1)
-    VirtualUser:Button2Up(Vector2.new(0, 0), Camera.CFrame)
-end)
+-- Core: start
+local function startCoinCollector()
+    if S.totalCoins >= FARM_GOAL then return end
+    if not getCoinContainer() then return end
+    if not getHRP() then return end
 
--- ==========================================
--- 14. ESP (Highlight по ролям + Coin/Gun)
--- ==========================================
-local ESP_COLORS = {
-    Murderer = Color3.fromRGB(255, 55, 55),
-    Sheriff  = Color3.fromRGB(55, 140, 255),
-    Hero     = Color3.fromRGB(255, 200, 0),
-    Innocent = Color3.fromRGB(80, 220, 120),
-    Coin     = Color3.fromRGB(255, 215, 60),
-    Gun      = Color3.fromRGB(255, 200, 0),
-}
-
-local function clearHighlight(plr)
-    if S.highlights[plr] then
-        pcall(function() S.highlights[plr]:Destroy() end)
-        S.highlights[plr] = nil
+    if S.coinConnection or S.coinCollecting then
+        stopCoinCollector()
     end
-end
 
-local function applyRoleESP(plr)
-    if plr == LocalPlayer or not plr.Character then clearHighlight(plr); return end
-    local role = getMM2Role(plr)
-    local col = ESP_COLORS[role] or ESP_COLORS.Innocent
-    if not S.highlights[plr] then
-        local h = Instance.new("Highlight")
-        h.Name = "Iroshida_ESP"
-        h.FillColor = col
-        h.FillTransparency = 0.35
-        h.OutlineTransparency = 1
-        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        h.Parent = plr.Character
-        S.highlights[plr] = h
-    else
-        S.highlights[plr].FillColor = col
+    S.coinCollecting = true
+    S.farmTargetCoin = nil
+    S.farmTouchedCoins = {}
+    S.farmBlacklist = {}
+    S.farmStartedAt = tick()
+    S.farmLastCollectAt = tick()
+    S.farmLastFallbackAt = tick()
+    S.farmStuckPos = nil
+    S.farmStuckAt = 0
+    S.farmLastCollectSpeedAt = 0
+    S.farmTargetStartedAt = 0
+    if S.coinStatusSetter then
+        S.coinStatusSetter(isLocalMurderer() and "Murderer · farming..." or "Searching target...")
     end
-end
+    ensureFarmHelpers()
+    ensureFarmNoclip()
+    attachFarmGyro()
+    ensureFarmBodyMovers()
 
-function refreshAllESP()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if Settings.RoleESP then applyRoleESP(plr) else clearHighlight(plr) end
-    end
-end
+    S.coinConnection = RunService.Heartbeat:Connect(function()
+        if not S.coinCollecting then return end
+        if not S.roundActive then stopCoinCollector() return end
+        if S.totalCoins >= FARM_GOAL then
+            if S.coinStatusSetter then S.coinStatusSetter("Goal reached") end
+            stopCoinCollector()
+            return
+        end
 
-local function updateCoinESP()
-    if not Settings.CoinESP then
-        for coin, tag in pairs(S.coinTags) do pcall(function() tag:Remove() end); S.coinTags[coin] = nil end
-        return
-    end
-    if not Drawing then return end
-    local seen = {}
-    for _, coin in ipairs(getAllCoins()) do
-        seen[coin] = true
-        if not S.coinTags[coin] then
-            local ok, t = pcall(function() return Drawing.new("Text") end)
-            if ok and t then
-                t.Size = 12; t.Center = true; t.Outline = true
-                t.Color = ESP_COLORS.Coin; t.Text = "COIN"
-                S.coinTags[coin] = t
+        local hrp = getHRP()
+        if not hrp then return end
+
+        local now = tick()
+        local myPos = hrp.Position
+        local coins = getAllCoins()
+
+        if S.coinGyro and S.coinGyro.Parent then
+            if now - S.lastGyroUpdate > 0.15 then
+                S.coinGyro.CFrame = CFrame.new(myPos)
+                S.lastGyroUpdate = now
+            end
+        elseif not S.coinGyro then
+            attachFarmGyro()
+        end
+
+        if not S.farmWalkBV or not S.farmWalkBV.Parent then
+            ensureFarmBodyMovers()
+            if not S.farmWalkBV then return end
+        end
+
+        -- firetouchinterest в радиусе 25
+        for _, coin in ipairs(coins) do
+            if coin and coin.Parent then
+                if (coin.Position - myPos).Magnitude <= FARM_TOUCH_RADIUS then
+                    local lastTouch = S.farmTouchedCoins[coin]
+                    if not lastTouch or now - lastTouch > FARM_TOUCH_COOLDOWN then
+                        S.farmTouchedCoins[coin] = now
+                        task.spawn(function()
+                            pcall(firetouchinterest, hrp, coin, 0)
+                            task.wait(0.02)
+                            if coin and coin.Parent then
+                                pcall(firetouchinterest, hrp, coin, 1)
+                            end
+                        end)
+                    end
+                end
             end
         end
-        local tag = S.coinTags[coin]
-        if tag then
-            local sp, on = Camera:WorldToViewportPoint(coin.Position)
-            tag.Visible = on
-            if on then tag.Position = Vector2.new(sp.X, sp.Y) end
-        end
-    end
-    for coin, tag in pairs(S.coinTags) do
-        if not seen[coin] or not coin.Parent then
-            pcall(function() tag:Remove() end)
-            S.coinTags[coin] = nil
-        end
-    end
-end
 
-local function updateGunESP()
-    if not Settings.GunESP then
-        if S.gunTag then pcall(function() S.gunTag:Remove() end); S.gunTag = nil end
-        return
-    end
-    if not Drawing then return end
-    local gd = findGunDrop()
-    if not gd then
-        if S.gunTag then S.gunTag.Visible = false end
-        return
-    end
-    if not S.gunTag then
-        local ok, t = pcall(function() return Drawing.new("Text") end)
-        if ok and t then
-            t.Size = 13; t.Center = true; t.Outline = true
-            t.Color = ESP_COLORS.Gun; t.Text = "GUN"
-            S.gunTag = t
+        -- чистки кэшей
+        for coin, t in pairs(S.farmTouchedCoins) do
+            if now - t > 5 or not coin or not coin.Parent then
+                S.farmTouchedCoins[coin] = nil
+            end
         end
-    end
-    if S.gunTag then
-        local sp, on = Camera:WorldToViewportPoint(gd.Position)
-        S.gunTag.Visible = on
-        if on then S.gunTag.Position = Vector2.new(sp.X, sp.Y) end
-    end
+        for coin, t in pairs(S.farmBlacklist) do
+            if now - t > FARM_BLACKLIST_TIME + 2 or not coin or not coin.Parent then
+                S.farmBlacklist[coin] = nil
+            end
+        end
+
+        -- anti-focus (эвейд от убийцы)
+        local localIsMurderer = isLocalMurderer()
+        local murderer = getMurdererCached()
+        local mHRP = (not localIsMurderer) and murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart")
+        local distToMurderer = mHRP and (myPos - mHRP.Position).Magnitude or math.huge
+
+        if mHRP and distToMurderer < FARM_DANGER_DIST then
+            local awayDir = Vector3.new(myPos.X - mHRP.Position.X, 0, myPos.Z - mHRP.Position.Z)
+            if awayDir.Magnitude < 0.1 then awayDir = Vector3.new(1, 0, 0) end
+            awayDir = awayDir.Unit
+            S.farmWalkBV.Velocity = awayDir * FARM_FLY_SPEED * 2 + Vector3.new(0, 4, 0)
+            if S.coinStatusSetter then S.coinStatusSetter("DANGER · evading") end
+            return
+        end
+
+        -- таймаут цели
+        if S.farmTargetCoin and (now - S.farmTargetStartedAt) > FARM_TARGET_TIMEOUT then
+            blacklistCoin(S.farmTargetCoin)
+            S.farmTargetCoin = nil
+            S.farmTargetStartedAt = 0
+            if S.coinStatusSetter then S.coinStatusSetter("Target timeout · new route") end
+        end
+
+        -- выбор цели
+        if not S.farmTargetCoin or not S.farmTargetCoin.Parent or not isCoinValid(S.farmTargetCoin) then
+            S.farmTargetCoin = nil
+            local bestCoin, bestDist = nil, math.huge
+            for _, coin in ipairs(coins) do
+                if isCoinValid(coin) and not isCoinBlacklisted(coin) then
+                    local d = (coin.Position - myPos).Magnitude
+                    if d < bestDist then bestDist = d; bestCoin = coin end
+                end
+            end
+            if not bestCoin then
+                for _, coin in ipairs(coins) do
+                    if isCoinValid(coin) then
+                        local d = (coin.Position - myPos).Magnitude
+                        if d < bestDist then bestDist = d; bestCoin = coin end
+                    end
+                end
+            end
+            S.farmTargetCoin = bestCoin
+            S.farmTargetStartedAt = tick()
+            S.farmStuckPos = nil
+            S.farmStuckAt = 0
+        end
+
+        local target = S.farmTargetCoin
+        if not target then
+            S.farmWalkBV.Velocity = Vector3.zero
+            if S.coinStatusSetter then S.coinStatusSetter("No valid coins · waiting") end
+            return
+        end
+
+        local distToTarget = (target.Position - myPos).Magnitude
+
+        -- две ветки движения (Happy Hub)
+        if distToTarget < FARM_ARRIVE_DIST then
+            local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
+            local delta = targetPos - myPos
+            S.farmWalkBV.Velocity = Vector3.new(delta.X, delta.Y, delta.Z) * 5
+        else
+            local targetPos = target.Position + Vector3.new(0, FARM_GROUND_OFFSET, 0)
+            local delta = targetPos - myPos
+            local horiz = Vector3.new(delta.X, 0, delta.Z)
+            local hDist = horiz.Magnitude
+
+            local baseSpeed = FARM_FLY_SPEED
+            local justCollected = (now - S.farmLastCollectSpeedAt) < FARM_COLLECT_SPEED_RESET_TIME
+            if not justCollected and distToTarget < FARM_SLOW_RADIUS then
+                baseSpeed = math.max(1, FARM_FLY_SPEED - FARM_SLOW_AMOUNT)
+            end
+
+            if hDist > 0.5 then
+                local speed = math.min(baseSpeed, hDist * 5)
+                S.farmWalkBV.Velocity = horiz.Unit * speed + Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            else
+                S.farmWalkBV.Velocity = Vector3.new(0, math.clamp(delta.Y * 2, -8, 8), 0)
+            end
+        end
+
+        -- детект застревания
+        if not S.farmStuckPos then
+            S.farmStuckPos = myPos
+            S.farmStuckAt = now
+        elseif (myPos - S.farmStuckPos).Magnitude > FARM_STUCK_DIST then
+            S.farmStuckPos = myPos
+            S.farmStuckAt = now
+        elseif now - S.farmStuckAt > FARM_STUCK_TIME then
+            blacklistCoin(S.farmTargetCoin)
+            S.farmTargetCoin = nil
+            S.farmStuckPos = nil
+            S.farmStuckAt = 0
+            S.farmTargetStartedAt = 0
+            if S.coinStatusSetter then S.coinStatusSetter("Unsticking · finding new target") end
+        end
+
+        -- fallback TP раз в 14 сек
+        local timeSinceCollect = now - math.max(S.farmStartedAt, S.lastCollectTime)
+        if timeSinceCollect > FARM_FALLBACK_TIMEOUT
+            and now - S.farmLastFallbackAt > FARM_FALLBACK_COOLDOWN
+            and (localIsMurderer or not mHRP or distToMurderer > 25) then
+            S.farmLastFallbackAt = now
+            local tpCoin = nil
+            local bestDist = math.huge
+            for _, c in ipairs(coins) do
+                if isCoinValid(c) then
+                    if localIsMurderer or not mHRP or (c.Position - mHRP.Position).Magnitude > 25 then
+                        local d = (c.Position - hrp.Position).Magnitude
+                        if d < bestDist then bestDist = d; tpCoin = c end
+                    end
+                end
+            end
+            if tpCoin then
+                S.farmTargetCoin = tpCoin
+                S.farmTargetStartedAt = tick()
+                local d = (tpCoin.Position - hrp.Position).Magnitude
+                if d < 60 then
+                    hrp.CFrame = CFrame.new(tpCoin.Position + Vector3.new(0, 3, 0))
+                end
+                S.farmStuckPos = nil
+                S.farmStuckAt = 0
+                if S.coinStatusSetter then
+                    S.coinStatusSetter(localIsMurderer and "Murderer · safe coin TP" or "Fallback TP")
+                end
+            end
+        end
+
+        if S.coinStatusSetter then
+            local prefix = localIsMurderer and "Murderer · " or ""
+            S.coinStatusSetter(prefix .. "Moving · " .. #coins .. " coins")
+        end
+    end)
 end
 
 -- ==========================================
--- 15. UI
+-- 7. MEMORY PURGE
+-- ==========================================
+local function purgeMemoryCaches(full)
+    pcall(function()
+        for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+        for k in pairs(VisCache) do VisCache[k] = nil end
+        if full then
+            MurdererCache.plr = nil
+            MurdererCache.time = 0
+            for k in pairs(S.roleCache) do S.roleCache[k] = nil end
+            for k in pairs(S.bagProgress) do S.bagProgress[k] = nil end
+        end
+        if S.farmTouchedCoins then
+            for coin in pairs(S.farmTouchedCoins) do
+                if not coin or not coin.Parent then S.farmTouchedCoins[coin] = nil end
+            end
+        end
+        if S.farmBlacklist then
+            for coin in pairs(S.farmBlacklist) do
+                if not coin or not coin.Parent then S.farmBlacklist[coin] = nil end
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- 8. SPLASH
+-- ==========================================
+local Splash = Instance.new("ScreenGui")
+Splash.IgnoreGuiInset = true
+Splash.Parent = LocalPlayer:WaitForChild("PlayerGui")
+trackGui(Splash)
+
+local SplashText = Instance.new("TextLabel")
+SplashText.Size = UDim2.new(1, 0, 1, 0)
+SplashText.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+SplashText.Text = "Загрузка..."
+SplashText.TextColor3 = Color3.fromRGB(255, 255, 255)
+SplashText.Font = Enum.Font.GothamBold
+SplashText.TextSize = 28
+SplashText.Parent = Splash
+
+task.wait(0.4)
+SplashText.Text = "Iroshida v11.0"
+task.wait(0.5)
+Splash:Destroy()
+
+-- ==========================================
+-- 9. UI
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Iroshida_UI_v10"
+ScreenGui.Name = "Iroshida_v11"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+trackGui(ScreenGui)
 
 local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 460, 0, 340)
-Main.Position = UDim2.new(0.5, -230, 0.5, -170)
+Main.Size = UDim2.new(0, 420, 0, 320)
+Main.Position = UDim2.new(0.5, -210, 0.5, -160)
 Main.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 Main.BorderSizePixel = 0
 Main.Active = true
@@ -908,7 +792,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -20, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "Iroshida | v10.0"
+Title.Text = "Iroshida | v11.0"
 Title.TextColor3 = Color3.fromRGB(180, 100, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 14
@@ -986,7 +870,6 @@ local function addToggle(page, text, key, callback)
         Settings[key] = not Settings[key]
         update()
         if callback then callback(Settings[key]) end
-        SaveConfig()
     end)
     update()
     return btn
@@ -1032,17 +915,17 @@ local function addSlider(page, text, min, max, value, key, callback)
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
     local dragging = false
-    bar.InputBegan:Connect(function(i)
+    trackConn(nil, bar.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
             dragging = true
         end
-    end)
-    UserInputService.InputEnded:Connect(function(i)
+    end))
+    trackConn(nil, UserInputService.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
+    end))
+    trackConn(nil, UserInputService.InputChanged:Connect(function(i)
         if not dragging then return end
         if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
             local p = math.clamp((i.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
@@ -1053,72 +936,76 @@ local function addSlider(page, text, min, max, value, key, callback)
             if key then Settings[key] = v end
             if callback then callback(v) end
         end
-    end)
+    end))
 end
 
 -- TAB: Farm
 local FarmPage = makeTab("Farm", "🪙")
+
 addToggle(FarmPage, "Автофарм монет", "FarmEnabled", function(v)
     if v then
-        S.totalCoins = 0
-        S.bagProgress = {}
-        attachFarmBody()
+        ensureFarmHelpers()
+        ensureFarmNoclip()
+        if S.roundActive and not S.coinCollecting then
+            startCoinCollector()
+        end
     else
-        detachFarmBody()
-        if S.tracer then S.tracer.Visible = false end
+        stopCoinCollector()
+        restoreFarmNoclip()
+        restoreFarmHelpers()
     end
 end)
-addSlider(FarmPage, "Скорость", 10, 60, Settings.FarmSpeed, "FarmSpeed")
-addSlider(FarmPage, "Лимит монет", 10, 200, Settings.CoinLimit, "CoinLimit")
-addToggle(FarmPage, "Убегать от убийцы", "AutoEvade")
-addSlider(FarmPage, "Радиус побега", 10, 50, Settings.EvadeRadius, "EvadeRadius")
-addToggle(FarmPage, "Линия к цели", "ShowTracer")
 
--- TAB: Roles
-local RolePage = makeTab("Роли", "🎭")
-addToggle(RolePage, "Убить всех (Убийца)", "KillAll")
-addToggle(RolePage, "Стрелять в убийцу (Шериф)", "AutoShoot")
-addToggle(RolePage, "Подобрать пистолет (Невиновный)", "AutoGun")
+addSlider(FarmPage, "Лимит монет", 10, 200, Settings.CoinLimit, "CoinLimit", function(v)
+    FARM_GOAL = v
+end)
+
+-- счётчик
+local coinCountLbl = Instance.new("TextLabel")
+coinCountLbl.Size = UDim2.new(1, 0, 0, 24)
+coinCountLbl.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+coinCountLbl.TextColor3 = Color3.fromRGB(255, 215, 60)
+coinCountLbl.Font = Enum.Font.Code
+coinCountLbl.TextSize = 13
+coinCountLbl.Text = "Coins: 0"
+coinCountLbl.Parent = FarmPage
+Instance.new("UICorner", coinCountLbl).CornerRadius = UDim.new(0, 6)
+
+-- статус
+local statusLbl = Instance.new("TextLabel")
+statusLbl.Size = UDim2.new(1, 0, 0, 24)
+statusLbl.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+statusLbl.TextColor3 = Color3.fromRGB(180, 100, 255)
+statusLbl.Font = Enum.Font.Code
+statusLbl.TextSize = 12
+statusLbl.Text = "Idle"
+statusLbl.Parent = FarmPage
+Instance.new("UICorner", statusLbl).CornerRadius = UDim.new(0, 6)
+
+S.coinCountSetter = function(n)
+    coinCountLbl.Text = "Coins: " .. tostring(n)
+end
+S.coinStatusSetter = function(txt)
+    statusLbl.Text = tostring(txt)
+end
 
 -- TAB: Movement
-local MovePage = makeTab("Полёт", "✈️")
-local flyBtn = addToggle(MovePage, "Включить полёт (F)", "FlyEnabled", function(v)
+local MovePage = makeTab("Движение", "✈")
+
+addToggle(MovePage, "Полёт (F)", "FlyEnabled", function(v)
     if v then startFly() else stopFly() end
 end)
 addSlider(MovePage, "Скорость полёта", 10, 200, Settings.FlySpeed, "FlySpeed")
 addToggle(MovePage, "Noclip", "Noclip")
-addToggle(MovePage, "Anti-Void", "AntiVoid")
 addToggle(MovePage, "Anti-AFK", "AntiAFK")
+addToggle(MovePage, "Anti-Void", "AntiVoid")
 
--- TAB: Visuals
-local VisPage = makeTab("Визуал", "👁")
-addToggle(VisPage, "Role ESP", "RoleESP", function(v)
-    Settings.RoleESP = v
-    refreshAllESP()
-end)
-addToggle(VisPage, "Coin ESP", "CoinESP")
-addToggle(VisPage, "Gun ESP", "GunESP")
-addToggle(VisPage, "Убрать тени", "KillShadows", function(v)
-    Lighting.GlobalShadows = not v
-end)
-addToggle(VisPage, "Пластиковый мир", "PlasticMode", function(v)
-    if v then
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("BasePart") then obj.Material = Enum.Material.Plastic end
-        end
-    end
-end)
+-- TAB: Combat
+local CombatPage = makeTab("Бой", "⚔")
 
--- TAB: Settings
-local SetPage = makeTab("Настройки", "🛠")
-addToggle(SetPage, "Auto-Execute после телепорта", "AutoExec", function(v)
-    if v and writefile and readfile then
-        -- даём пользователю сам скрипт в файл
-        pcall(function()
-            if readfile and isfile and isfile(AutoExecFile) then return end
-        end)
-    end
-end)
+addToggle(CombatPage, "Убить всех (Murderer)", "KillAll")
+addToggle(CombatPage, "Стрелять в убийцу (Sheriff)", "AutoShoot")
+addToggle(CombatPage, "Подобрать пушку (Innocent)", "AutoGun")
 
 -- активируем Farm
 Pages["Farm"].Visible = true
@@ -1129,129 +1016,425 @@ for _, c in ipairs(TabBar:GetChildren()) do
     end
 end
 
-UI = { refreshFlyToggle = function() end } -- заглушка
+-- ==========================================
+-- 10. FLY (BodyVelocity + BodyGyro)
+-- ==========================================
+local function attachFly()
+    local hrp, hum = getHRP(), getHum()
+    if not hrp or not hum then return end
+    hum.PlatformStand = true
+    if S.flyBV then S.flyBV:Destroy() end
+    if S.flyBG then S.flyBG:Destroy() end
+    S.flyBV = Instance.new("BodyVelocity")
+    S.flyBV.Velocity = Vector3.zero
+    S.flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    S.flyBV.Parent = hrp
+    S.flyBG = Instance.new("BodyGyro")
+    S.flyBG.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+    S.flyBG.P = 1e4
+    S.flyBG.CFrame = hrp.CFrame
+    S.flyBG.Parent = hrp
+end
+
+local function detachFly()
+    if S.flyBV then S.flyBV:Destroy(); S.flyBV = nil end
+    if S.flyBG then S.flyBG:Destroy(); S.flyBG = nil end
+    local hum = getHum()
+    if hum then hum.PlatformStand = false end
+end
+
+function startFly()
+    dropConn("fly")
+    attachFly()
+    trackConn("fly", RunService.Heartbeat:Connect(function()
+        if not Settings.FlyEnabled then return end
+        local hrp = getHRP()
+        if not hrp then return end
+        if not S.flyBV or not S.flyBV.Parent then attachFly() end
+        if not S.flyBV then return end
+        local mv = Vector3.zero
+        local cf = Workspace.CurrentCamera.CFrame
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv = mv + cf.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv = mv - cf.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv = mv - cf.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv = mv + cf.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then mv = mv + Vector3.yAxis end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then mv = mv - Vector3.yAxis end
+        S.flyBV.Velocity = mv.Magnitude > 0 and mv.Unit * Settings.FlySpeed or Vector3.zero
+        S.flyBG.CFrame = Workspace.CurrentCamera.CFrame
+    end))
+end
+
+function stopFly()
+    dropConn("fly")
+    detachFly()
+end
+
+trackConn("fkey", UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.F then
+        Settings.FlyEnabled = not Settings.FlyEnabled
+        if Settings.FlyEnabled then startFly() else stopFly() end
+    end
+end))
 
 -- ==========================================
--- 16. MAIN LOOP
+-- 11. COMBAT (минимальный)
 -- ==========================================
-RunService.Heartbeat:Connect(function()
-    -- farm
-    if Settings.FarmEnabled then farmStep() end
+local function getLocalKnife()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    for _, t in ipairs(char:GetChildren()) do
+        if t:IsA("Tool") and string.lower(t.Name):find("knife", 1, true) then return t end
+    end
+    return nil
+end
+
+local function equipKnife()
+    if getLocalKnife() then return true end
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if not bp then return false end
+    for _, t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") and string.lower(t.Name):find("knife", 1, true) then
+            local hum = getHum()
+            if hum then pcall(function() hum:EquipTool(t) end) end
+            task.wait(0.2)
+            return true
+        end
+    end
+    return false
+end
+
+local function murderTick()
+    if not Settings.KillAll then return end
+    if tick() - S.lastKillTick < 0.05 then return end
+    S.lastKillTick = tick()
+
+    local knife = getLocalKnife()
+    if not knife then
+        equipKnife()
+        knife = getLocalKnife()
+        if not knife then return end
+    end
+
+    local events = knife:FindFirstChild("Events")
+    local stab  = events and events:FindFirstChild("KnifeStabbed")
+    local touch = events and events:FindFirstChild("HandleTouched")
+    local handle = knife:FindFirstChild("Handle")
+
+    pcall(function() knife:Activate() end)
+    if stab then pcall(function() stab:FireServer() end) end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and isAlive(plr) then
+            local hrp = getHRP(plr)
+            local head = plr.Character:FindFirstChild("Head")
+            if touch then
+                if hrp then pcall(function() touch:FireServer(hrp) end) end
+                if head then pcall(function() touch:FireServer(head) end) end
+            end
+            if handle then
+                if hrp then
+                    pcall(firetouchinterest, hrp, handle, 0)
+                    pcall(firetouchinterest, hrp, handle, 1)
+                    pcall(firetouchinterest, handle, hrp, 0)
+                    pcall(firetouchinterest, handle, hrp, 1)
+                end
+            end
+        end
+    end
+end
+
+local function getGun()
+    local char = LocalPlayer.Character
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") then
+                local n = string.lower(t.Name)
+                if n:find("gun") or n:find("revolver") or n:find("pistol") then return t end
+            end
+        end
+    end
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") then
+                local n = string.lower(t.Name)
+                if n:find("gun") or n:find("revolver") or n:find("pistol") then return t end
+            end
+        end
+    end
+    return nil
+end
+
+local function sheriffTick()
+    if not Settings.AutoShoot then return end
+    if tick() - S.lastShotTick < 0.12 then return end
+    S.lastShotTick = tick()
+
+    local gun = getGun()
+    if not gun then return end
+    local target = getMurdererCached()
+    if not target then return end
+    local targetHRP = getHRP(target)
+    if not targetHRP then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    if gun.Parent ~= char then
+        local hum = getHum()
+        if hum then pcall(function() hum:EquipTool(gun) end) end
+        task.wait(0.05)
+        gun = getGun()
+        if not gun then return end
+    end
+    local shoot = gun:FindFirstChild("Shoot") or gun:FindFirstChild("Shoot", true)
+    if not shoot then return end
+    local myHRP = getHRP()
+    if not myHRP then return end
+    if shoot:IsA("RemoteEvent") then
+        pcall(function() shoot:FireServer(myHRP.CFrame, CFrame.new(targetHRP.Position)) end)
+    end
+end
+
+local function innocentTick()
+    if not Settings.AutoGun then return end
+    if isLocalMurderer() or getGun() then return end
+    local gd = Workspace:FindFirstChild("GunDrop", true)
+    local hrp = getHRP()
+    if not gd or not hrp then return end
+    if (gd.Position - hrp.Position).Magnitude > 5 then
+        hrp.CFrame = CFrame.new(gd.Position + Vector3.new(0, 2, 0))
+    end
+end
+
+-- ==========================================
+-- 12. MAIN LOOP (не-farm вещи)
+-- ==========================================
+trackConn("main", RunService.Heartbeat:Connect(function()
+    -- noclip
+    if Settings.Noclip then
+        local char = LocalPlayer.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end
+        end
+    end
+
+    -- anti-void
+    if Settings.AntiVoid then
+        local hrp = getHRP()
+        if hrp then
+            if hrp.Position.Y >= 10 then
+                S.lastSafeCFrame = hrp.CFrame
+            elseif hrp.Position.Y <= -30 and S.lastSafeCFrame then
+                hrp.CFrame = S.lastSafeCFrame
+                hrp.Velocity = Vector3.zero
+                hrp.RotVelocity = Vector3.zero
+            end
+        end
+    end
 
     -- combat
     if isLocalMurderer() then murderTick() end
-    if isLocalSheriff() then sheriffTick() end
+    if getGun() then sheriffTick() end
     innocentTick()
+end))
 
-    -- movement
-    noclipStep()
-    antiVoidStep()
+-- Anti-AFK
+trackConn("afk", LocalPlayer.Idled:Connect(function()
+    if not Settings.AntiAFK then return end
+    VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+    task.wait(1)
+    VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+end))
 
-    -- ESP
-    if Settings.RoleESP then
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer then applyRoleESP(plr) end
+-- ==========================================
+-- 13. EVENTS (Happy Hub 1:1)
+-- ==========================================
+local remotes  = ReplicatedStorage:FindFirstChild("Remotes")
+local gameplay = remotes and remotes:FindFirstChild("Gameplay")
+local coinsStartedEvent  = gameplay and gameplay:FindFirstChild("CoinsStarted")
+local coinCollectedEvent = gameplay and gameplay:FindFirstChild("CoinCollected")
+local roundEndFadeEvent  = gameplay and gameplay:FindFirstChild("RoundEndFade")
+local roundStartEvent    = gameplay and gameplay:FindFirstChild("RoundStart")
+
+if coinsStartedEvent then
+    trackConn("coins_started", coinsStartedEvent.OnClientEvent:Connect(function(data)
+        markRoundStarted()
+        stopCoinCollector()
+        S.bagProgress = {}
+        if type(data) == "table" and data.Coin then
+            if data.Coin.CollectionLimit then
+                FARM_GOAL = data.Coin.CollectionLimit
+                Settings.CoinLimit = FARM_GOAL
+            end
+        end
+        S.totalCoins = 0
+        S.farmTargetCoin = nil
+        S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
+        S.farmLastCollectSpeedAt = 0
+        if S.coinCountSetter then S.coinCountSetter(0) end
+        S.roundActive = true
+        if Settings.FarmEnabled then
+            ensureFarmNoclip()
+            startCoinCollector()
+        end
+    end))
+end
+
+if coinCollectedEvent then
+    trackConn("coin_collected", coinCollectedEvent.OnClientEvent:Connect(function(bagName, currentCoins)
+        S.lastCollectTime = tick()
+        S.farmLastCollectAt = tick()
+        S.farmLastCollectSpeedAt = tick()
+        S.farmTargetCoin = nil
+        S.farmTargetStartedAt = 0
+        S.farmStuckPos = nil
+        S.farmStuckAt = 0
+        if type(bagName) == "string" and type(currentCoins) == "number" then
+            S.bagProgress[bagName] = currentCoins
+        end
+        S.totalCoins = 0
+        for _, v in pairs(S.bagProgress) do
+            if type(v) == "number" then S.totalCoins = S.totalCoins + v end
+        end
+        if S.coinCountSetter then S.coinCountSetter(S.totalCoins) end
+    end))
+end
+
+if roundStartEvent then
+    trackConn("round_start", roundStartEvent.OnClientEvent:Connect(function()
+        markRoundStarted()
+        stopCoinCollector()
+        S.bagProgress = {}
+        S.totalCoins = 0
+        S.farmTargetCoin = nil
+        S.farmBlacklist = {}
+        S.farmTouchedCoins = {}
+        S.farmLastCollectSpeedAt = 0
+        S.roundActive = true
+        if S.coinCountSetter then S.coinCountSetter(0) end
+        pcall(function()
+            for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+            for k in pairs(VisCache) do VisCache[k] = nil end
+        end)
+        if Settings.FarmEnabled then
+            ensureFarmNoclip()
+            task.wait(0.5)
+            startCoinCollector()
+        end
+    end))
+end
+
+if roundEndFadeEvent then
+    trackConn("round_end", roundEndFadeEvent.OnClientEvent:Connect(function()
+        S.roundActive = false
+        S.roundStartedAt = 0
+        S.roleCache = {}
+        stopCoinCollector()
+        if Settings.FarmEnabled then restoreFarmNoclip() end
+        task.wait(0.05)
+        purgeMemoryCaches(true)
+    end))
+end
+
+-- Watchdog (Happy Hub): перезапуск фарма если что-то сорвалось
+trackThread(task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if Settings.FarmEnabled and S.roundActive and not S.coinCollecting and S.totalCoins < FARM_GOAL then
+            startCoinCollector()
         end
     end
-    updateCoinESP()
-    updateGunESP()
-end)
+end))
 
--- ==========================================
--- 17. EVENTS (серверные)
--- ==========================================
-pcall(function()
-    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-    local gameplay = remotes and remotes:FindFirstChild("Gameplay")
-    if not gameplay then return end
-
-    local coinsStarted = gameplay:FindFirstChild("CoinsStarted")
-    if coinsStarted then
-        coinsStarted.OnClientEvent:Connect(function(data)
-            S.roundActive = true
-            S.roundStartedAt = tick()
-            S.totalCoins = 0
-            S.bagProgress = {}
-            S.farmTarget = nil
-            S.farmBlacklist = {}
-            if type(data) == "table" and data.Coin and data.Coin.CollectionLimit then
-                Settings.CoinLimit = data.Coin.CollectionLimit
+-- Периодический purge (Happy Hub)
+trackThread(task.spawn(function()
+    while true do
+        task.wait(45)
+        pcall(purgeMemoryCaches, false)
+        local list = getgenv().__IROSHIDA_STATE.connections
+        if list and #list > 60 then
+            local alive = {}
+            for _, c in ipairs(list) do
+                if c then
+                    local ok, connected = pcall(function() return c.Connected end)
+                    if ok and connected then alive[#alive + 1] = c end
+                end
             end
-            if Settings.FarmEnabled then attachFarmBody() end
-        end)
+            getgenv().__IROSHIDA_STATE.connections = alive
+        end
     end
-
-    local coinCollected = gameplay:FindFirstChild("CoinCollected")
-    if coinCollected then
-        coinCollected.OnClientEvent:Connect(function(bag, n)
-            if type(bag) == "string" and type(n) == "number" then
-                S.bagProgress[bag] = n
-                local total = 0
-                for _, v in pairs(S.bagProgress) do total += v end
-                S.totalCoins = total
-                -- сброс target после сбора — не залипаем
-                S.farmTarget = nil
-            end
-        end)
-    end
-
-    local roundStart = gameplay:FindFirstChild("RoundStart")
-    if roundStart then
-        roundStart.OnClientEvent:Connect(function()
-            S.roundActive = true
-            S.roundStartedAt = tick()
-            S.totalCoins = 0
-            S.bagProgress = {}
-            S.roleCache = {}
-            if Settings.FarmEnabled then attachFarmBody() end
-        end)
-    end
-
-    local roundEnd = gameplay:FindFirstChild("RoundEndFade")
-    if roundEnd then
-        roundEnd.OnClientEvent:Connect(function()
-            S.roundActive = false
-            S.roundStartedAt = 0
-            S.roleCache = {}
-            S.totalCoins = 0
-            S.bagProgress = {}
-            detachFarmBody()
-            if S.tracer then S.tracer.Visible = false end
-            for plr in pairs(S.highlights) do clearHighlight(plr) end
-        end)
-    end
-end)
+end))
 
 -- ==========================================
--- 18. CHARACTER HANDLERS
+-- 14. CHARACTER HANDLERS
 -- ==========================================
-LocalPlayer.CharacterAdded:Connect(function()
-    S.roleCache = {}
+trackConn("char_added", LocalPlayer.CharacterAdded:Connect(function()
+    MurdererCache.plr = nil
+    MurdererCache.time = 0
+    for k in pairs(TargetVisibility) do TargetVisibility[k] = nil end
+    for k in pairs(VisCache) do VisCache[k] = nil end
     S.lastSafeCFrame = nil
-    S.totalCoins = 0
-    S.bagProgress = {}
-    S.farmTarget = nil
-    S.farmTouched = {}
+    S.lastCollectTime = 0
+    S.farmTargetCoin = nil
+    S.coinCollecting = false
+    if S.coinConnection then pcall(function() S.coinConnection:Disconnect() end); S.coinConnection = nil end
+    S.coinGyro = nil
+    S.farmWalkBV = nil
+    pcall(purgeMemoryCaches, false)
+    S.farmTouchedCoins = {}
     S.farmBlacklist = {}
-    S._stuckPos = nil
+    S.farmLastCollectAt = 0
+    S.farmStartedAt = 0
+    S.farmLastFallbackAt = 0
+    S.farmStuckPos = nil
+    S.farmStuckAt = 0
+    S.farmLastCollectSpeedAt = 0
+    S.farmTargetStartedAt = 0
+    S.lastGyroUpdate = 0
+    stopFarmBodyMovers()
+
     task.wait(0.6)
     if Settings.FlyEnabled then startFly() end
-    if Settings.FarmEnabled then attachFarmBody() end
-end)
+    if Settings.FarmEnabled and S.roundActive then
+        task.wait(0.5)
+        if not S.coinCollecting then startCoinCollector() end
+    end
+end))
 
-Players.PlayerRemoving:Connect(function(plr)
-    clearHighlight(plr)
+trackConn("player_removing", Players.PlayerRemoving:Connect(function(plr)
     S.roleCache[plr] = nil
-end)
+    TargetVisibility[plr] = nil
+    VisCache[plr] = nil
+end))
 
 -- ==========================================
--- 19. BOOT
+-- 15. BOOT
 -- ==========================================
 hookFade()
-task.spawn(function()
-    while task.wait(3) do
+trackThread(task.spawn(function()
+    while true do
+        task.wait(3)
         hookFade()
     end
-end)
+end))
 
-print("[Iroshida v10.0] Готов. F — полёт. Фарм отдельно.")
+-- Пытаемся определить roundActive при загрузке в разгаре раунда
+trackThread(task.spawn(function()
+    task.wait(1)
+    local cc = getCoinContainer()
+    if cc then
+        local coins = getAllCoins()
+        if #coins > 0 then
+            S.roundActive = true
+            if Settings.FarmEnabled and not S.coinCollecting then
+                startCoinCollector()
+            end
+        end
+    end
+end))
+
+print("[Iroshida v11.0] Готов. Farm: Happy Hub 1:1 · Memory: purge/watchdog active.")
