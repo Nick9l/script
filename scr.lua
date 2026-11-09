@@ -1,5 +1,5 @@
 -- ==========================================
--- IROSHIDA v2.6 (Final Stable Build)
+-- IROSHIDA v3.0 (Tween Edition)
 -- Script made by Nick9l
 -- ==========================================
 
@@ -8,6 +8,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local VirtualUser = game:GetService("VirtualUser")
 
@@ -40,7 +41,7 @@ Splash:Destroy()
 local Settings = {
     FarmEnabled = false,
     CoinLimit = 50,
-    FlySpeed = 50,
+    FlySpeed = 50, -- Теперь это скорость анимации (чем больше, тем быстрее полет)
     Cooldown = 0.1,
     FarmMode = "Быстрый",
     
@@ -70,7 +71,7 @@ local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
 local Window = Library:CreateWindow({
-    Title = 'Iroshida v2.6',
+    Title = 'Iroshida v3.0',
     Center = true,
     AutoShow = true,
     TabPadding = 8,
@@ -165,61 +166,65 @@ local function getClosestItem(mode)
 end
 
 -- ==========================================
--- 6. МОДУЛЬ ПОЛЕТА (Без CFrame, без вылетов)
+-- 6. МОДУЛЬ ПОЛЕТА (TWEEN SERVICE)
 -- ==========================================
-local flyConnection = nil
-local currentTarget = nil
-local targetSearchTimer = 0
-
 local function startFarmLoop()
-    local character = LocalPlayer.Character
-    local hrp = character and character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+    task.spawn(function()
+        while Settings.FarmEnabled do
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if not hrp then task.wait(0.5) continue end
 
-    local bv = hrp:FindFirstChild("IroshidaVelocity") or Instance.new("BodyVelocity")
-    bv.Name = "IroshidaVelocity"
-    bv.Parent = hrp
-    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            if currentCoins >= Settings.CoinLimit then
+                Settings.FarmEnabled = false
+                Library:Notify("Лимит монет достигнут!", 3)
+                break
+            end
 
-    if flyConnection then flyConnection:Disconnect() end
-    
-    flyConnection = RunService.Heartbeat:Connect(function(deltaTime)
-        if not Settings.FarmEnabled then
-            bv.Velocity = Vector3.new(0, 0, 0)
-            return
-        end
-
-        if currentCoins >= Settings.CoinLimit then
-            Settings.FarmEnabled = false
-            bv.Velocity = Vector3.new(0, 0, 0)
-            Library:Notify("Лимит монет достигнут!", 3)
-            return
-        end
-
-        -- Поиск цели раз в 0.2 сек
-        targetSearchTimer = targetSearchTimer + deltaTime
-        if targetSearchTimer > 0.2 or not currentTarget or not currentTarget.Parent then
-            currentTarget = getClosestItem(Settings.FarmMode)
-            targetSearchTimer = 0
-        end
-        
-        if currentTarget and hrp then
-            local distance = (currentTarget.Position - hrp.Position).Magnitude
+            local target = getClosestItem(Settings.FarmMode)
             
-            -- Радиус 1 стад (просто пролетаем сквозь)
-            if distance < 1 then
-                if not collectedCoins[currentTarget] then
-                    collectedCoins[currentTarget] = true
-                    currentCoins = currentCoins + 1 
-                    currentTarget = nil 
+            if target then
+                -- 1. Отключаем коллизии, чтобы пролететь сквозь стены (Noclip)
+                if Settings.Noclip then
+                    for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                        if part:IsA("BasePart") then part.CanCollide = false end
+                    end
+                end
+
+                -- 2. Высчитываем время полета (чем больше скорость, тем меньше времени)
+                -- Формула: дистанция / скорость. Ограничиваем минимум 0.1 сек, чтобы не было телепортации.
+                local distance = (target.Position - hrp.Position).Magnitude
+                local travelTime = math.max(0.1, distance / (Settings.FlySpeed * 2)) 
+
+                -- 3. Создаем анимацию полета
+                local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
+                local goal = { CFrame = target.CFrame }
+                local tween = TweenService:Create(hrp, tweenInfo, goal)
+                
+                -- 4. Летим
+                tween:Play()
+                tween.Completed:Wait()
+
+                -- 5. Ждем задержку (сбор монеты)
+                task.wait(Settings.Cooldown)
+
+                -- 6. Засчитываем монету
+                if not collectedCoins[target] then
+                    collectedCoins[target] = true
+                    currentCoins = currentCoins + 1
+                end
+
+                -- 7. Включаем коллизии обратно (чтобы не провалиться)
+                if Settings.Noclip then
+                    for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                        if part:IsA("BasePart") and not part:FindFirstAncestorOfClass("Accessory") then 
+                            part.CanCollide = true 
+                        end
+                    end
                 end
             else
-                -- Летим на полной скорости
-                local direction = (currentTarget.Position - hrp.Position).Unit
-                bv.Velocity = direction * Settings.FlySpeed
+                -- Если монет нет (лобби), просто ждем
+                task.wait(0.5)
             end
-        else
-            bv.Velocity = Vector3.new(0, 0, 0)
         end
     end)
 end
@@ -488,25 +493,7 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 10. ОПТИМИЗИРОВАННЫЙ NOCLIP (БЕЗ ЛАГОВ)
--- ==========================================
--- Убрали тяжелый RunService.Stepped, который вешал игру. 
--- Теперь Noclip проверяется раз в 0.5 секунды в отдельном потоке.
-task.spawn(function()
-    while task.wait(0.5) do
-        if LocalPlayer.Character then
-            local shouldCollide = not (Settings.FarmEnabled and Settings.Noclip)
-            for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
-                if part:IsA("BasePart") and not part:FindFirstAncestorOfClass("Accessory") then
-                    part.CanCollide = shouldCollide
-                end
-            end
-        end
-    end
-end)
-
--- ==========================================
--- 11. НАСТРОЙКИ UI (SaveManager)
+-- 10. НАСТРОЙКИ UI (SaveManager)
 -- ==========================================
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 MenuGroup:AddButton('Unload', function() Library:Unload() end)
@@ -523,4 +510,4 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
 
-print("[Iroshida v2.6] Загружен успешно!")
+print("[Iroshida v3.0] Загружен успешно!")
