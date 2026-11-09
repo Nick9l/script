@@ -1,27 +1,49 @@
 -- ==========================================
--- IROSHIDA v5.0 (PROTO Engine)
--- Script made by Nick9l
+-- IROSHIDA v7.0 (Ultimate Hybrid)
+-- Engine: PROTO | Roles: ELITE | Logic: Nick9l
 -- ==========================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local LocalPlayer = Players.LocalPlayer
+local VirtualUser = game:GetService("VirtualUser")
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-
+-- ==========================================
+-- 1. НАСТРОЙКИ (Config)
+-- ==========================================
 local Settings = {
-    FarmCoins = false,
-    FarmCandy = false,
-    TweenSpeed = 50,
-    Noclip = true
+    FarmEnabled = false,
+    CoinLimit = 50,
+    FlySpeed = 40, -- Скорость Tween
+    Noclip = true,
+    
+    -- Тактические фишки
+    AutoGun = true,      -- Подбор пистолета (Невиновный)
+    AutoShoot = true,    -- Стрельба в убийцу (Шериф)
+    KillAll = true,      -- Убить всех (Убийца)
+    Magnet = true,       -- Магнит (Зомби)
+    
+    -- Перфоманс
+    PlasticMode = false,
+    KillShadows = false,
+    GreySky = false
 }
 
 local CurrentTween = nil
 local VisitedCoins = {}
+local AutoFarmThread = nil
+local RoleLogicThread = nil
+local currentRole = "Innocent"
+local isInfection = false
+local collectedCount = 0
 
 -- ==========================================
--- 1. Загрузочный экран
+-- 2. ЗАГРУЗОЧНЫЙ ЭКРАН
 -- ==========================================
 local Splash = Instance.new("ScreenGui")
 Splash.Parent = LocalPlayer:WaitForChild("PlayerGui")
@@ -30,19 +52,21 @@ Splash.IgnoreGuiInset = true
 local SplashText = Instance.new("TextLabel")
 SplashText.Parent = Splash
 SplashText.Size = UDim2.new(1, 0, 1, 0)
-SplashText.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+SplashText.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
 SplashText.Text = "Привет."
 SplashText.TextColor3 = Color3.fromRGB(255, 255, 255)
-SplashText.Font = Enum.Font.SourceSansBold
-SplashText.TextSize = 40
+SplashText.Font = Enum.Font.GothamBold
+SplashText.TextSize = 36
 
 task.wait(1)
-SplashText.Text = "Iroshida | made by Nick9l"
+SplashText.Text = "Загрузка..."
+task.wait(0.5)
+SplashText.Text = "Iroshida v7.0"
 task.wait(1)
 Splash:Destroy()
 
 -- ==========================================
--- 2. Интерфейс (Легкий, без Linoria)
+-- 3. ЛЕГКИЙ GUI (Без Linoria/Fluent)
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Iroshida_UI"
@@ -50,187 +74,303 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 220, 0, 180)
-MainFrame.Position = UDim2.new(0.5, -110, 0.3, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+MainFrame.Size = UDim2.new(0, 320, 0, 280)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -140)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 35)
+TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 10)
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 35)
-Title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-Title.Text = "Iroshida | AutoFarm"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Size = UDim2.new(1, -20, 1, 0)
+Title.Position = UDim2.new(0, 10, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "Iroshida | v7.0"
+Title.TextColor3 = Color3.fromRGB(180, 100, 255)
 Title.Font = Enum.Font.GothamBold
-Title.Parent = MainFrame
-Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 8)
+Title.TextSize = 15
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = TitleBar
 
 local Content = Instance.new("Frame")
 Content.Size = UDim2.new(1, -20, 1, -45)
 Content.Position = UDim2.new(0, 10, 0, 40)
 Content.BackgroundTransparency = 1
 Content.Parent = MainFrame
-Instance.new("UIListLayout", Content).Padding = UDim.new(0, 5)
+local UIList = Instance.new("UIListLayout", Content)
+UIList.Padding = UDim.new(0, 6)
+UIList.SortOrder = Enum.SortOrder.LayoutOrder
 
-local function CreateToggle(text, key)
+-- Функция создания Toggle
+local function CreateToggle(text, key, callback)
     local Btn = Instance.new("TextButton")
-    Btn.Size = UDim2.new(1, 0, 0, 35)
-    Btn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-    Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Btn.Size = UDim2.new(1, 0, 0, 30)
+    Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    Btn.TextColor3 = Color3.fromRGB(200, 200, 200)
     Btn.Font = Enum.Font.Gotham
-    Btn.TextSize = 14
+    Btn.TextSize = 13
     Btn.Parent = Content
     Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
 
     local function Update()
         Btn.Text = text .. (Settings[key] and " : ON" or " : OFF")
-        Btn.BackgroundColor3 = Settings[key] and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(50, 50, 60)
+        Btn.BackgroundColor3 = Settings[key] and Color3.fromRGB(100, 50, 150) or Color3.fromRGB(35, 35, 45)
+        Btn.TextColor3 = Settings[key] and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(200, 200, 200)
     end
 
     Btn.MouseButton1Click:Connect(function()
         Settings[key] = not Settings[key]
         Update()
-        if not Settings[key] and CurrentTween then
-            CurrentTween:Cancel()
-            CurrentTween = nil
-        end
+        if callback then callback(Settings[key]) end
     end)
     Update()
 end
 
-CreateToggle("🪙 Фарм Монет", "FarmCoins")
-CreateToggle("🍬 Фарм Конфет", "FarmCandy")
+-- Функция создания Slider (через кнопку, чтобы не усложнять)
+local function CreateSpeedBtn()
+    local Btn = Instance.new("TextButton")
+    Btn.Size = UDim2.new(1, 0, 0, 30)
+    Btn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    Btn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    Btn.Font = Enum.Font.Gotham
+    Btn.TextSize = 13
+    Btn.Text = "Скорость полета: " .. Settings.FlySpeed
+    Btn.Parent = Content
+    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
+
+    Btn.MouseButton1Click:Connect(function()
+        Settings.FlySpeed = Settings.FlySpeed + 10
+        if Settings.FlySpeed > 100 then Settings.FlySpeed = 20 end
+        Btn.Text = "Скорость полета: " .. Settings.FlySpeed
+    end)
+end
+
+CreateToggle("🪙 Включить автофарм", "FarmEnabled", function(val)
+    if val then
+        collectedCount = 0
+        VisitedCoins = {}
+        startFarm()
+        startRoleLogic()
+    else
+        if CurrentTween then CurrentTween:Cancel() end
+    end
+end)
+CreateSpeedBtn()
+
+CreateToggle("🔫 Подбор пистолета (Невиновный)", "AutoGun")
+CreateToggle("🎯 Стрельба в убийцу (Шериф)", "AutoShoot")
+CreateToggle("🔪 Убить всех (Убийца/Зомби)", "KillAll")
+CreateToggle("🧲 Магнит (Инфекция)", "Magnet")
+
 CreateToggle("👻 Noclip", "Noclip")
-
-local SpeedBtn = Instance.new("TextButton")
-SpeedBtn.Size = UDim2.new(1, 0, 0, 35)
-SpeedBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-SpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-SpeedBtn.Text = "Скорость: 50"
-SpeedBtn.Font = Enum.Font.Gotham
-SpeedBtn.Parent = Content
-Instance.new("UICorner", SpeedBtn).CornerRadius = UDim.new(0, 6)
-
-SpeedBtn.MouseButton1Click:Connect(function()
-    Settings.TweenSpeed = Settings.TweenSpeed + 10
-    if Settings.TweenSpeed > 100 then Settings.TweenSpeed = 20 end
-    SpeedBtn.Text = "Скорость: " .. Settings.TweenSpeed
+CreateToggle("🧊 Пластиковый мир (FPS)", "PlasticMode", function(val)
+    if val then
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then obj.Material = Enum.Material.Plastic end
+        end
+    end
 end)
 
 -- ==========================================
--- 3. Двигатель PROTO (Killer Physics)
+-- 4. ОПРЕДЕЛЕНИЕ РОЛЕЙ (От ELITE)
 -- ==========================================
-RunService.Stepped:Connect(function()
-    if (Settings.FarmCoins or Settings.FarmCandy) and LocalPlayer.Character then
-        local rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if rootPart then
-            -- Убиваем физику (чтобы не дергало)
-            rootPart.Velocity = Vector3.zero
-            rootPart.RotVelocity = Vector3.zero
-        end
-        if Settings.Noclip then
-            for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
-                if part:IsA("BasePart") and part.CanCollide then
-                    part.CanCollide = false
-                end
+local function getRole()
+    local hasKnife, hasGun = false, false
+    
+    -- Проверяем рюкзак и руки
+    for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
+        local n = string.lower(tool.Name)
+        if n:find("knife") then hasKnife = true end
+        if n:find("gun") or n:find("revolver") then hasGun = true end
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                local n = string.lower(tool.Name)
+                if n:find("knife") then hasKnife = true end
+                if n:find("gun") or n:find("revolver") then hasGun = true end
             end
         end
     end
-end)
 
--- ==========================================
--- 4. Поиск и полет (PROTO Logic)
--- ==========================================
-local function FindCoinContainer()
-    for _, child in ipairs(workspace:GetChildren()) do
-        local container = child:FindFirstChild("CoinContainer") or child:FindFirstChild("CandyContainer")
-        if container then return container end
+    -- Считаем врагов для определения режима (Инфекция)
+    local totalKnives = 0
+    local totalGuns = 0
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Backpack then
+            if plr.Backpack:FindFirstChild("Knife") then totalKnives = totalKnives + 1 end
+            if plr.Backpack:FindFirstChild("Gun") then totalGuns = totalGuns + 1 end
+        end
     end
-    return workspace:FindFirstChild("CoinContainer", true) or workspace:FindFirstChild("CandyContainer", true)
+    isInfection = (totalKnives >= 2 or totalGuns >= 2)
+
+    if hasKnife then
+        currentRole = isInfection and "Zombie" or "Murderer"
+    elseif hasGun then
+        currentRole = isInfection and "Survivor" or "Sheriff"
+    else
+        currentRole = "Innocent"
+    end
 end
 
-local function GetValidCoinPart(item)
-    if VisitedCoins[item] then return nil end
-    
-    local visual = item:FindFirstChild("CoinVisual") or item
-    if visual and visual:IsA("BasePart") then
-        if visual.Transparency > 0.5 then return nil end -- Монета уже собрана
-        return visual
+-- ==========================================
+-- 5. ДВИГАТЕЛЬ PROTO (Поиск и Tween)
+-- ==========================================
+local function getMap()
+    for _, v in pairs(Workspace:GetDescendants()) do
+        if v.Name == "Spawns" and v.Parent.Name ~= "Lobby" then return v.Parent end
     end
     return nil
 end
 
-local function GetNearestCollectible(container)
-    local character = LocalPlayer.Character
-    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-    if not rootPart or not container then return nil, nil, nil end
-
-    local nearestPart, nearestItem, shortestDist = nil, nil, math.huge
-
-    for _, item in ipairs(container:GetChildren()) do
-        local targetPart = GetValidCoinPart(item)
-        if targetPart then
-            local dist = (rootPart.Position - targetPart.Position).Magnitude
-            if dist < shortestDist and dist < 300 then
-                shortestDist = dist
-                nearestPart = targetPart
-                nearestItem = item
-            end
-        end
-    end
-    return nearestPart, nearestItem, shortestDist
+local function getCoinContainer()
+    local map = getMap()
+    if not map then return nil end
+    return map:FindFirstChild("CoinContainer") or map:FindFirstChild("CandyContainer")
 end
 
-task.spawn(function()
-    while task.wait(0.1) do
-        if Settings.FarmCoins or Settings.FarmCandy then
-            local character = LocalPlayer.Character
-            local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-            local container = FindCoinContainer()
+function startFarm()
+    if AutoFarmThread then task.cancel(AutoFarmThread) end
+    AutoFarmThread = task.spawn(function()
+        while Settings.FarmEnabled do
+            local container = getCoinContainer()
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            
+            if container and hrp then
+                local nearestPart, nearestItem, shortestDist = nil, nil, math.huge
+                
+                for _, item in ipairs(container:GetChildren()) do
+                    if not VisitedCoins[item] then
+                        local part = item:FindFirstChild("CoinVisual") or item
+                        if part and part:IsA("BasePart") and part.Transparency < 0.5 then
+                            local dist = (hrp.Position - part.Position).Magnitude
+                            if dist < shortestDist and dist < 300 then
+                                shortestDist = dist
+                                nearestPart = part
+                                nearestItem = item
+                            end
+                        end
+                    end
+                end
 
-            if rootPart and humanoid and humanoid.Health > 0 and container then
-                local targetPart, targetItem, dist = GetNearestCollectible(container)
-                if targetPart and targetItem and dist then
-                    
-                    -- Считаем время полета
-                    local duration = math.clamp(dist / Settings.TweenSpeed, 0.05, 5)
-                    
-                    -- Создаем анимацию полета
-                    CurrentTween = TweenService:Create(rootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
-                        CFrame = CFrame.new(targetPart.Position)
+                if nearestPart then
+                    local duration = math.clamp(shortestDist / Settings.FlySpeed, 0.05, 3)
+                    CurrentTween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+                        CFrame = CFrame.new(nearestPart.Position)
                     })
                     CurrentTween:Play()
-
-                    -- Ждем, пока долетим (или пока монета не исчезнет)
-                    local startTime = tick()
-                    while CurrentTween and CurrentTween.PlaybackState == Enum.PlaybackState.Playing do
-                        if not (Settings.FarmCoins or Settings.FarmCandy) then
-                            CurrentTween:Cancel()
-                            break
-                        end
-                        -- Если монета исчезла или стала прозрачной
-                        if not targetItem.Parent or targetPart.Transparency > 0.5 or (tick() - startTime) > (duration + 0.5) then
-                            CurrentTween:Cancel()
-                            break
-                        end
-                        task.wait(0.05)
-                    end
-
-                    -- Защита от повторного сбора
-                    VisitedCoins[targetItem] = true
-                    task.delay(3, function() VisitedCoins[targetItem] = nil end)
                     
-                    -- Задержка, чтобы сервер засчитал
-                    task.wait(0.12)
+                    task.wait(duration + 0.1) -- Ждем долета
+                    VisitedCoins[nearestItem] = true
+                    collectedCount = collectedCount + 1
+                    task.wait(0.1) -- Задержка на сбор
+                else
+                    task.wait(0.5) -- Ждем появления монет
                 end
             else
-                VisitedCoins = {}
+                task.wait(0.5) -- Ждем загрузки карты
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- 6. ЛОГИКА РОЛЕЙ (Твои фишки)
+-- ==========================================
+function startRoleLogic()
+    if RoleLogicThread then task.cancel(RoleLogicThread) end
+    RoleLogicThread = task.spawn(function()
+        while Settings.FarmEnabled do
+            task.wait(0.5)
+            getRole() -- Обновляем роль
+            
+            -- Если нафармили лимит, начинаем действовать
+            if collectedCount >= Settings.CoinLimit then
+                
+                -- 1. УБИЙЦА / ЗОМБИ (Магнит)
+                if (currentRole == "Murderer" or currentRole == "Zombie") and Settings.KillAll then
+                    for _, plr in pairs(Players:GetPlayers()) do
+                        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
+                            task.wait(0.05)
+                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            task.wait(0.2)
+                        end
+                    end
+                end
+                
+                -- 2. ШЕРИФ
+                if currentRole == "Sheriff" and Settings.AutoShoot then
+                    for _, plr in pairs(Players:GetPlayers()) do
+                        if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, plr.Character.HumanoidRootPart.Position)
+                            task.wait(0.1)
+                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                        end
+                    end
+                end
+                
+                -- 3. НЕВИНОВНЫЙ (Пистолет)
+                if currentRole == "Innocent" and Settings.AutoGun then
+                    local gunDrop = Workspace:FindFirstChild("Normal") and Workspace.Normal:FindFirstChild("GunDrop")
+                    if gunDrop then
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = gunDrop.CFrame
+                        task.wait(0.2)
+                        -- Подобрали, стреляем
+                        for _, plr in pairs(Players:GetPlayers()) do
+                            if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
+                                LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, plr.Character.HumanoidRootPart.Position)
+                                VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                                VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            end
+                        end
+                    end
+                end
+                
+                -- 4. ВЫЖИВШИЙ (Инфекция - заразиться)
+                if currentRole == "Survivor" then
+                    for _, plr in pairs(Players:GetPlayers()) do
+                        if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
+                            task.wait(0.5)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- 7. ФИЗИКА И NOCLIP (PROTO)
+-- ==========================================
+RunService.Stepped:Connect(function()
+    if Settings.FarmEnabled and LocalPlayer.Character then
+        local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Velocity = Vector3.zero
+            hrp.RotVelocity = Vector3.zero
+        end
+        
+        if Settings.Noclip then
+            for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = false end
             end
         end
     end
 end)
 
-print("[Iroshida v5.0] PROTO Engine Loaded!")
+print("[Iroshida v7.0] Загружен! Все системы в норме.")
