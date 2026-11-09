@@ -1,5 +1,5 @@
 -- ==========================================
--- IROSHIDA v2.0 (Monolith Build)
+-- IROSHIDA v2.1 (Fixed & Performance Build)
 -- Script made by Nick9l
 -- ==========================================
 
@@ -35,21 +35,23 @@ task.wait(1.5)
 Splash:Destroy()
 
 -- ==========================================
--- 2. НАСТРОЙКИ (Центральный блок)
+-- 2. НАСТРОЙКИ
 -- ==========================================
 local Settings = {
     FarmEnabled = false,
     CoinLimit = 50,
     FlySpeed = 50,
     Cooldown = 0.1,
-    FarmMode = "Быстрый", -- "Быстрый" или "Аккуратный"
+    FarmMode = "Быстрый",
     
-    AutoShoot = true,     -- Автострельба за шерифа
-    AutoGun = true,       -- Подбор пистолета за невиновного
-    KillAll = true,       -- Убить всех за убийцу
-    Magnet = false,       -- Магнит для зомби
-    FarmExp = true,       -- Режим EXP (не делать reset)
+    AutoShoot = true,
+    AutoGun = true,
+    KillAll = true,
+    Magnet = false,
+    FarmExp = true,
+    InnocentTimeout = 35, -- Секунды ожидания пистолета
     
+    Noclip = true, -- Включен по умолчанию для фарма
     RamMode = "Off",
     RamInterval = 30
 }
@@ -57,6 +59,7 @@ local Settings = {
 local currentCoins = 0
 local isInfection = false
 local myRole = "Innocent" 
+local collectedCoins = {} -- Таблица для защиты от дублирования монет
 
 -- ==========================================
 -- 3. ЗАГРУЗКА UI (LINORIA)
@@ -67,7 +70,7 @@ local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
 local Window = Library:CreateWindow({
-    Title = 'Iroshida v2.0',
+    Title = 'Iroshida v2.1',
     Center = true,
     AutoShow = true,
     TabPadding = 8,
@@ -109,7 +112,7 @@ local function updateGameState()
 end
 
 -- ==========================================
--- 5. УНИВЕРСАЛЬНЫЙ ПОИСК (Монеты, Конфеты, Мячи)
+-- 5. УНИВЕРСАЛЬНЫЙ ПОИСК (С защитой от повторного сбора)
 -- ==========================================
 local cachedCoinContainer = nil
 
@@ -118,20 +121,14 @@ local function getClosestItem(mode)
         cachedCoinContainer = nil
         for _, obj in pairs(Workspace:GetDescendants()) do
             if obj.Name == "CoinContainer" or obj.Name == "CandyContainer" or obj.Name == "Coins" or obj.Name == "Normal" then
-                -- Если это Normal, проверяем есть ли внутри Coin/Candy
                 if obj.Name == "Normal" then
                     local container = obj:FindFirstChild("CoinContainer") or obj:FindFirstChild("CandyContainer")
-                    if container then
-                        cachedCoinContainer = container
-                        break
-                    end
+                    if container then cachedCoinContainer = container; break end
                 else
-                    cachedCoinContainer = obj
-                    break
+                    cachedCoinContainer = obj; break
                 end
             elseif obj.Name == "Coin" or obj.Name == "Candy" or obj.Name == "Beachball" then
-                cachedCoinContainer = obj.Parent
-                break
+                cachedCoinContainer = obj.Parent; break
             end
         end
     end
@@ -143,7 +140,7 @@ local function getClosestItem(mode)
 
     local allItems = {}
     for _, item in pairs(cachedCoinContainer:GetChildren()) do
-        if item:IsA("BasePart") then
+        if item:IsA("BasePart") and not collectedCoins[item] then
             table.insert(allItems, item)
         end
     end
@@ -168,46 +165,58 @@ local function getClosestItem(mode)
 end
 
 -- ==========================================
--- 6. МОДУЛЬ ПОЛЕТА (ФАРМ)
+-- 6. МОДУЛЬ ПОЛЕТА (ФАРМ БЕЗ ЛАГОВ)
 -- ==========================================
-local function startFarmLoop()
-    task.spawn(function()
-        while Settings.FarmEnabled do
-            task.wait(Settings.Cooldown)
-            
-            if currentCoins >= Settings.CoinLimit then
-                Settings.FarmEnabled = false
-                Library:Notify("Лимит монет достигнут!", 3)
-                break
-            end
+local flyConnection = nil
+local currentTarget = nil
+local targetSearchTimer = 0
 
-            local targetItem = getClosestItem(Settings.FarmMode)
-            local character = LocalPlayer.Character
-            local hrp = character and character:FindFirstChild("HumanoidRootPart")
-            
-            if targetItem and hrp then
-                local bv = hrp:FindFirstChild("IroshidaVelocity") or Instance.new("BodyVelocity")
-                bv.Name = "IroshidaVelocity"
-                bv.Parent = hrp
-                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                
-                local direction = (targetItem.Position - hrp.Position).Unit
-                bv.Velocity = direction * Settings.FlySpeed
-                
-                if (targetItem.Position - hrp.Position).Magnitude < 5 then
-                    bv.Velocity = Vector3.new(0, 0, 0)
-                    currentCoins = currentCoins + 1 
-                end
-            else
-                -- Если цель не найдена, просто зависаем на месте
-                local bv = hrp and hrp:FindFirstChild("IroshidaVelocity")
-                if bv then bv.Velocity = Vector3.new(0, 0, 0) end
-            end
+local function startFarmLoop()
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local bv = hrp:FindFirstChild("IroshidaVelocity") or Instance.new("BodyVelocity")
+    bv.Name = "IroshidaVelocity"
+    bv.Parent = hrp
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+
+    if flyConnection then flyConnection:Disconnect() end
+    
+    flyConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        if not Settings.FarmEnabled then
+            bv.Velocity = Vector3.new(0, 0, 0)
+            return
+        end
+
+        if currentCoins >= Settings.CoinLimit then
+            Settings.FarmEnabled = false
+            bv.Velocity = Vector3.new(0, 0, 0)
+            Library:Notify("Лимит монет достигнут!", 3)
+            return
+        end
+
+        -- Ищем цель раз в 0.5 сек (для оптимизации)
+        targetSearchTimer = targetSearchTimer + deltaTime
+        if targetSearchTimer > 0.5 or not currentTarget or not currentTarget.Parent then
+            currentTarget = getClosestItem(Settings.FarmMode)
+            targetSearchTimer = 0
         end
         
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            local bv = LocalPlayer.Character.HumanoidRootPart:FindFirstChild("IroshidaVelocity")
-            if bv then bv:Destroy() end
+        if currentTarget and hrp then
+            local direction = (currentTarget.Position - hrp.Position).Unit
+            bv.Velocity = direction * Settings.FlySpeed
+            
+            -- Сбор монеты (защита от спама)
+            if (currentTarget.Position - hrp.Position).Magnitude < 5 then
+                if not collectedCoins[currentTarget] then
+                    collectedCoins[currentTarget] = true
+                    currentCoins = currentCoins + 1 
+                    currentTarget = nil 
+                end
+            end
+        else
+            bv.Velocity = Vector3.new(0, 0, 0)
         end
     end)
 end
@@ -221,13 +230,11 @@ local function handleRoleLogic()
             task.wait(0.5)
             updateGameState()
 
-            -- Если лимит не достигнут, ничего не делаем (ждем фарм)
+            -- Ждем, пока нафармит лимит
             if currentCoins < Settings.CoinLimit then continue end 
 
             if not isInfection then
-                -- КЛАССИКА
                 if myRole == "Murderer" and Settings.KillAll then
-                    -- Терминатор (Убийца)
                     for _, player in pairs(Players:GetPlayers()) do
                         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                             LocalPlayer.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame
@@ -238,7 +245,6 @@ local function handleRoleLogic()
                         end
                     end
                 elseif myRole == "Sheriff" and Settings.AutoShoot then
-                    -- Стрельба в убийцу (Шериф)
                     for _, player in pairs(Players:GetPlayers()) do
                         if player.Backpack and player.Backpack:FindFirstChild("Knife") and player.Character then
                             LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, player.Character.HumanoidRootPart.Position)
@@ -248,12 +254,10 @@ local function handleRoleLogic()
                         end
                     end
                 elseif myRole == "Innocent" and Settings.AutoGun then
-                    -- Логика невиновного
                     local gunDrop = Workspace:FindFirstChild("Normal") and Workspace.Normal:FindFirstChild("GunDrop")
                     if gunDrop then
                         LocalPlayer.Character.HumanoidRootPart.CFrame = gunDrop.CFrame
                         task.wait(0.5)
-                        -- Стреляем в убийцу
                         for _, player in pairs(Players:GetPlayers()) do
                             if player.Backpack and player.Backpack:FindFirstChild("Knife") and player.Character then
                                 LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, player.Character.HumanoidRootPart.Position)
@@ -264,12 +268,11 @@ local function handleRoleLogic()
                     else
                         task.wait(Settings.InnocentTimeout)
                         if not Settings.FarmExp then
-                            LocalPlayer.Character:BreakJoints() -- Reset, если EXP не включен
+                            LocalPlayer.Character:BreakJoints()
                         end
                     end
                 end
             else
-                -- ИНФЕКЦИЯ
                 if myRole == "Survivor" then
                     for _, player in pairs(Players:GetPlayers()) do
                         if player.Backpack and player.Backpack:FindFirstChild("Knife") and player.Character then
@@ -305,6 +308,7 @@ FarmGroup:AddToggle('FarmToggle', {
         Settings.FarmEnabled = Value
         if Value then
             currentCoins = 0
+            collectedCoins = {}
             startFarmLoop()
             handleRoleLogic()
         end
@@ -380,7 +384,6 @@ RoleGroup:AddToggle('FarmExpToggle', {
 -- 9. ИНТЕРФЕЙС PERFORMANCE
 -- ==========================================
 local PerformanceGroup = Tabs.Performance:AddLeftGroupbox('Optimization')
-
 local originalMaterials = {}
 
 PerformanceGroup:AddToggle('PlasticMode', {
@@ -424,6 +427,29 @@ PerformanceGroup:AddToggle('KillLight', {
     end
 })
 
+PerformanceGroup:AddToggle('GreySky', {
+    Text = 'Серое небо (FPS)',
+    Default = false,
+    Callback = function(Value)
+        if Value then
+            local sky = Instance.new("Sky")
+            sky.SkyboxBk = ""; sky.SkyboxDn = ""; sky.SkyboxFt = ""; sky.SkyboxLf = ""; sky.SkyboxRt = ""; sky.SkyboxUp = ""
+            sky.Parent = Lighting
+            Lighting.FogColor = Color3.new(0.5, 0.5, 0.5)
+            Lighting.FogEnd = 10000
+        else
+            local sky = Lighting:FindFirstChildOfClass("Sky")
+            if sky then sky:Destroy() end
+        end
+    end
+})
+
+PerformanceGroup:AddToggle('NoclipToggle', {
+    Text = 'Noclip (Проход сквозь стены)',
+    Default = true,
+    Callback = function(Value) Settings.Noclip = Value end
+})
+
 PerformanceGroup:AddButton('Убить эффекты (Дым/Огонь)', function()
     for _, obj in pairs(Workspace:GetDescendants()) do
         if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") then
@@ -460,7 +486,28 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 10. НАСТРОЙКИ UI (SaveManager)
+-- 10. МОДУЛЬ NOCLIP (Привязан к фарму)
+-- ==========================================
+RunService.Stepped:Connect(function()
+    if Settings.FarmEnabled and Settings.Noclip and LocalPlayer.Character then
+        for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    else
+        if LocalPlayer.Character then
+            for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") and not part:FindFirstAncestorOfClass("Accessory") then
+                    part.CanCollide = true
+                end
+            end
+        end
+    end
+end)
+
+-- ==========================================
+-- 11. НАСТРОЙКИ UI (SaveManager)
 -- ==========================================
 local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
 MenuGroup:AddButton('Unload', function() Library:Unload() end)
@@ -477,4 +524,4 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
 
-print("[Iroshida v2.0] Загружен успешно!")
+print("[Iroshida v2.1] Загружен успешно!")
