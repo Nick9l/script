@@ -1,6 +1,6 @@
 -- ==========================================
--- IROSHIDA v8.1 (Slider Edition)
--- Engine: PROTO | Roles: ELITE | Logic: Nick9l
+-- IROSHIDA v9.0 (Ultimate Stable Build)
+-- Engine: PROTO | Logic: ELITE + Custom
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -20,7 +20,8 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 local Settings = {
     FarmEnabled = false,
     CoinLimit = 50,
-    FlySpeed = 40,
+    FlySpeed = 30,
+    Radius = 80,
     Noclip = true,
     
     AutoGun = true,
@@ -28,10 +29,14 @@ local Settings = {
     KillAll = true,
     Magnet = true,
     
+    YProtect = true,
+    MinY = -50,
+    MaxY = 500,
+    ShowTracer = false,
+    
     PlasticMode = false,
     KillShadows = false,
-    KillLight = false,
-    GreySky = false
+    KillLight = false
 }
 
 local CurrentTween = nil
@@ -39,9 +44,21 @@ local VisitedCoins = {}
 local AutoFarmThread = nil
 local RoleLogicThread = nil
 local currentRole = "Innocent"
-local isInfection = false
 local collectedCount = 0
 local originalMaterials = {}
+local tracerLine = nil
+
+-- Безопасное создание линии для трассера
+if Drawing then
+    local ok, obj = pcall(function() return Drawing.new("Line") end)
+    if ok then
+        tracerLine = obj
+        tracerLine.Thickness = 1.5
+        tracerLine.Color = Color3.fromRGB(180, 100, 255)
+        tracerLine.Transparency = 0.5
+        tracerLine.Visible = false
+    end
+end
 
 -- ==========================================
 -- 2. ЗАГРУЗОЧНЫЙ ЭКРАН
@@ -62,105 +79,153 @@ SplashText.TextSize = 36
 task.wait(1)
 SplashText.Text = "Загрузка..."
 task.wait(0.5)
-SplashText.Text = "Iroshida v8.1"
+SplashText.Text = "Iroshida v9.0"
 task.wait(1)
 Splash:Destroy()
 
 -- ==========================================
--- 3. ЛОГИКА (Объявлена ДО UI, чтобы работала)
+-- 3. ЛОГИКА РОЛЕЙ
 -- ==========================================
 local function getRole()
     local hasKnife, hasGun = false, false
-    
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if backpack then
         for _, tool in ipairs(backpack:GetChildren()) do
             local n = string.lower(tool.Name)
-            if n:find("knife") then hasKnife = true end
+            if n:find("knife") or n:find("blade") then hasKnife = true end
             if n:find("gun") or n:find("revolver") then hasGun = true end
         end
     end
-    
     local char = LocalPlayer.Character
     if char then
         for _, tool in ipairs(char:GetChildren()) do
             if tool:IsA("Tool") then
                 local n = string.lower(tool.Name)
-                if n:find("knife") then hasKnife = true end
+                if n:find("knife") or n:find("blade") then hasKnife = true end
                 if n:find("gun") or n:find("revolver") then hasGun = true end
             end
         end
-    end
-
-    local totalKnives, totalGuns = 0, 0
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Backpack then
-            if plr.Backpack:FindFirstChild("Knife") then totalKnives = totalKnives + 1 end
-            if plr.Backpack:FindFirstChild("Gun") then totalGuns = totalGuns + 1 end
+        -- Проверка атрибутов (как в ELITE)
+        local roleAttr = char:GetAttribute("Role") or LocalPlayer:GetAttribute("Role")
+        if roleAttr then
+            local l = string.lower(tostring(roleAttr))
+            if l:find("murder") then hasKnife = true end
+            if l:find("sheriff") then hasGun = true end
         end
     end
-    isInfection = (totalKnives >= 2 or totalGuns >= 2)
 
-    if hasKnife then currentRole = isInfection and "Zombie" or "Murderer"
-    elseif hasGun then currentRole = isInfection and "Survivor" or "Sheriff"
+    if hasKnife then currentRole = "Murderer"
+    elseif hasGun then currentRole = "Sheriff"
     else currentRole = "Innocent" end
 end
 
-local function getMap()
-    for _, v in pairs(Workspace:GetDescendants()) do
-        if v.Name == "Spawns" and v.Parent.Name ~= "Lobby" then return v.Parent end
+-- ==========================================
+-- 4. ФАРМ (С проверкой TouchTransmitter)
+-- ==========================================
+local function getCoinContainer()
+    local normal = Workspace:FindFirstChild("Normal")
+    if normal then
+        return normal:FindFirstChild("CoinContainer") or normal:FindFirstChild("CandyContainer")
     end
     return nil
-end
-
-local function getCoinContainer()
-    local map = getMap()
-    if not map then return nil end
-    return map:FindFirstChild("CoinContainer") or map:FindFirstChild("CandyContainer")
 end
 
 local function startFarm()
     if AutoFarmThread then task.cancel(AutoFarmThread) end
     AutoFarmThread = task.spawn(function()
+        local cachedContainer = nil
+        
         while Settings.FarmEnabled do
-            local container = getCoinContainer()
+            -- Обновляем контейнер, если он пропал
+            if not cachedContainer or not cachedContainer.Parent then
+                cachedContainer = getCoinContainer()
+            end
+
             local char = LocalPlayer.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if container and hrp then
+
+            if cachedContainer and hrp then
                 local nearestPart, nearestItem, shortestDist = nil, nil, math.huge
-                for _, item in ipairs(container:GetChildren()) do
+                
+                for _, item in ipairs(cachedContainer:GetChildren()) do
                     if not VisitedCoins[item] then
-                        local part = item:FindFirstChild("CoinVisual") or item
-                        if part and part:IsA("BasePart") and part.Transparency < 0.5 then
-                            local dist = (hrp.Position - part.Position).Magnitude
-                            if dist < shortestDist and dist < 300 then
-                                shortestDist = dist; nearestPart = part; nearestItem = item
+                        -- ГЛАВНАЯ ПРОВЕРКА: есть ли TouchTransmitter?
+                        local touch = item:FindFirstChildWhichIsA("TouchTransmitter")
+                        if touch then
+                            local part = item:FindFirstChild("CoinVisual") or item
+                            if part and part:IsA("BasePart") then
+                                -- Проверка Y (защита от фантомов)
+                                local posY = part.Position.Y
+                                local yValid = true
+                                if Settings.YProtect then
+                                    if posY < Settings.MinY or posY > Settings.MaxY then
+                                        yValid = false
+                                    end
+                                end
+                                
+                                if yValid then
+                                    local dist = (hrp.Position - part.Position).Magnitude
+                                    if dist <= Settings.Radius and dist < shortestDist then
+                                        shortestDist = dist
+                                        nearestPart = part
+                                        nearestItem = item
+                                    end
+                                end
                             end
+                        else
+                            -- Монета уже собрана (кем-то другим)
+                            VisitedCoins[item] = true
                         end
                     end
                 end
+
                 if nearestPart then
+                    -- Линия к цели (Tracer)
+                    if Settings.ShowTracer and tracerLine then
+                        tracerLine.From = Vector2.new(Workspace.CurrentCamera.ViewportSize.X / 2, Workspace.CurrentCamera.ViewportSize.Y)
+                        local screenPoint, onScreen = Workspace.CurrentCamera:WorldToViewportPoint(nearestPart.Position)
+                        if onScreen then
+                            tracerLine.To = Vector2.new(screenPoint.X, screenPoint.Y)
+                            tracerLine.Visible = true
+                        end
+                    end
+
                     local duration = math.clamp(shortestDist / Settings.FlySpeed, 0.05, 3)
                     CurrentTween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = CFrame.new(nearestPart.Position)})
                     CurrentTween:Play()
+                    
                     task.wait(duration + 0.1)
+                    
+                    if tracerLine then tracerLine.Visible = false end
+                    
                     VisitedCoins[nearestItem] = true
                     collectedCount = collectedCount + 1
                     task.wait(0.1)
-                else task.wait(0.5) end
-            else task.wait(0.5) end
+                else 
+                    if tracerLine then tracerLine.Visible = false end
+                    task.wait(0.5) -- Ждем появления монет
+                end
+            else 
+                task.wait(0.5) 
+            end
         end
+        if tracerLine then tracerLine.Visible = false end
     end)
 end
 
+-- ==========================================
+-- 5. ЛОГИКА ДЕЙСТВИЙ ПО РОЛЯМ
+-- ==========================================
 local function startRoleLogic()
     if RoleLogicThread then task.cancel(RoleLogicThread) end
     RoleLogicThread = task.spawn(function()
         while Settings.FarmEnabled do
             task.wait(0.5)
             getRole()
+            
             if collectedCount >= Settings.CoinLimit then
-                if (currentRole == "Murderer" or currentRole == "Zombie") and Settings.KillAll then
+                -- 1. УБИЙЦА
+                if currentRole == "Murderer" and Settings.KillAll then
                     for _, plr in pairs(Players:GetPlayers()) do
                         if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
                             LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
@@ -171,6 +236,7 @@ local function startRoleLogic()
                         end
                     end
                 end
+                -- 2. ШЕРИФ
                 if currentRole == "Sheriff" and Settings.AutoShoot then
                     for _, plr in pairs(Players:GetPlayers()) do
                         if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
@@ -181,6 +247,7 @@ local function startRoleLogic()
                         end
                     end
                 end
+                -- 3. НЕВИНОВНЫЙ
                 if currentRole == "Innocent" and Settings.AutoGun then
                     local gunDrop = Workspace:FindFirstChild("Normal") and Workspace.Normal:FindFirstChild("GunDrop")
                     if gunDrop then
@@ -195,22 +262,13 @@ local function startRoleLogic()
                         end
                     end
                 end
-                if currentRole == "Survivor" then
-                    for _, plr in pairs(Players:GetPlayers()) do
-                        if plr.Backpack and plr.Backpack:FindFirstChild("Knife") and plr.Character then
-                            LocalPlayer.Character.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
-                            task.wait(0.5)
-                            break
-                        end
-                    end
-                end
             end
         end
     end)
 end
 
 -- ==========================================
--- 4. UI
+-- 6. UI (Вкладки, Тумблеры, Слайдеры)
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Iroshida_UI"
@@ -218,8 +276,8 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 400, 0, 300)
-MainFrame.Position = UDim2.new(0.5, -200, 0.5, -150)
+MainFrame.Size = UDim2.new(0, 420, 0, 320)
+MainFrame.Position = UDim2.new(0.5, -210, 0.5, -160)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -237,7 +295,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -20, 1, 0)
 Title.Position = UDim2.new(0, 15, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "Iroshida | v8.1"
+Title.Text = "Iroshida | v9.0"
 Title.TextColor3 = Color3.fromRGB(180, 100, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 14
@@ -245,7 +303,7 @@ Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = TitleBar
 
 local TabBar = Instance.new("Frame")
-TabBar.Size = UDim2.new(0, 100, 1, -40)
+TabBar.Size = UDim2.new(0, 110, 1, -40)
 TabBar.Position = UDim2.new(0, 0, 0, 35)
 TabBar.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 TabBar.Parent = MainFrame
@@ -253,8 +311,8 @@ Instance.new("UICorner", TabBar).CornerRadius = UDim.new(0, 10)
 Instance.new("UIListLayout", TabBar).Padding = UDim.new(0, 5)
 
 local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -110, 1, -45)
-Content.Position = UDim2.new(0, 105, 0, 40)
+Content.Size = UDim2.new(1, -120, 1, -45)
+Content.Position = UDim2.new(0, 115, 0, 40)
 Content.BackgroundTransparency = 1
 Content.Parent = MainFrame
 
@@ -320,7 +378,6 @@ local function AddToggle(parent, text, key, callback)
     Update()
 end
 
--- НОВЫЙ СЛАЙДЕР
 local function AddSlider(parent, text, min, max, default, callback)
     local SliderFrame = Instance.new("Frame")
     SliderFrame.Size = UDim2.new(1, 0, 0, 40)
@@ -360,19 +417,16 @@ local function AddSlider(parent, text, min, max, default, callback)
     Instance.new("UICorner", Knob).CornerRadius = UDim.new(1, 0)
 
     local dragging = false
-
     Bar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
         end
     end)
-
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local mouseX = input.Position.X
@@ -380,11 +434,9 @@ local function AddSlider(parent, text, min, max, default, callback)
             local barSize = Bar.AbsoluteSize.X
             local percent = math.clamp((mouseX - barPos) / barSize, 0, 1)
             local value = math.floor(min + (max - min) * percent)
-
             Fill.Size = UDim2.new(percent, 0, 1, 0)
             Knob.Position = UDim2.new(percent, -7, 0.5, -7)
             Label.Text = text .. ": " .. value
-
             if callback then callback(value) end
         end
     end)
@@ -402,15 +454,17 @@ AddToggle(FarmPage, "Включить автофарм", "FarmEnabled", function
         if CurrentTween then CurrentTween:Cancel() end
     end
 end)
-AddSlider(FarmPage, "Скорость полета", 10, 100, Settings.FlySpeed, function(val)
-    Settings.FlySpeed = val
-end)
+AddSlider(FarmPage, "Скорость полета", 10, 50, Settings.FlySpeed, function(val) Settings.FlySpeed = val end)
+AddSlider(FarmPage, "Радиус поиска", 20, 150, Settings.Radius, function(val) Settings.Radius = val end)
+AddToggle(FarmPage, "Защита от фантомов (Y)", "YProtect")
+AddSlider(FarmPage, "Нижний порог Y", -100, 0, Settings.MinY, function(val) Settings.MinY = val end)
+AddSlider(FarmPage, "Верхний порог Y", 100, 1000, Settings.MaxY, function(val) Settings.MaxY = val end)
+AddToggle(FarmPage, "Показывать линию к цели", "ShowTracer")
 
 local RolePage = CreateTab("Роли", "🎭")
 AddToggle(RolePage, "Подбор пистолета (Невиновный)", "AutoGun")
 AddToggle(RolePage, "Стрельба в убийцу (Шериф)", "AutoShoot")
-AddToggle(RolePage, "Убить всех (Убийца/Зомби)", "KillAll")
-AddToggle(RolePage, "Магнит (Инфекция)", "Magnet")
+AddToggle(RolePage, "Убить всех (Убийца)", "KillAll")
 
 local PerfPage = CreateTab("Графика", "⚙️")
 AddToggle(PerfPage, "Пластиковый мир", "PlasticMode", function(val)
@@ -439,23 +493,11 @@ AddToggle(PerfPage, "Убрать освещение", "KillLight", function(val
         Lighting.Brightness = 2
     end
 end)
-AddToggle(PerfPage, "Серое небо", "GreySky", function(val)
-    if val then
-        local sky = Instance.new("Sky")
-        sky.SkyboxBk = ""; sky.SkyboxDn = ""; sky.SkyboxFt = ""; sky.SkyboxLf = ""; sky.SkyboxRt = ""; sky.SkyboxUp = ""
-        sky.Parent = Lighting
-        Lighting.FogColor = Color3.new(0.5, 0.5, 0.5)
-        Lighting.FogEnd = 10000
-    else
-        local sky = Lighting:FindFirstChildOfClass("Sky")
-        if sky then sky:Destroy() end
-    end
-end)
 
 local SetPage = CreateTab("Настройки", "🛠")
 AddToggle(SetPage, "Noclip", "Noclip")
 
--- Открываем первую вкладку (без Fire!)
+-- Активация первой вкладки
 Pages["AutoFarm"].Visible = true
 for _, child in ipairs(TabBar:GetChildren()) do
     if child:IsA("TextButton") and string.find(child.Text, "AutoFarm") then
@@ -465,12 +507,15 @@ for _, child in ipairs(TabBar:GetChildren()) do
 end
 
 -- ==========================================
--- 5. NOCLIP / PHYSICS
+-- 7. ФИЗИКА И NOCLIP
 -- ==========================================
 RunService.Stepped:Connect(function()
     if Settings.FarmEnabled and LocalPlayer.Character then
         local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then hrp.Velocity = Vector3.zero; hrp.RotVelocity = Vector3.zero end
+        if hrp then 
+            hrp.Velocity = Vector3.zero
+            hrp.RotVelocity = Vector3.zero
+        end
         if Settings.Noclip then
             for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
                 if part:IsA("BasePart") then part.CanCollide = false end
@@ -479,4 +524,4 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-print("[Iroshida v8.1] Загружен! Автофарм готов к работе.")
+print("[Iroshida v9.0] Загружен! Готов к работе.")
