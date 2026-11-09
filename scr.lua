@@ -1,5 +1,5 @@
 -- ==========================================
--- IROSHIDA v2.2 (Smart Cache & Fixed Farm)
+-- IROSHIDA v2.3 (Stable & Fast Build)
 -- Script made by Nick9l
 -- ==========================================
 
@@ -70,7 +70,7 @@ local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
 local Window = Library:CreateWindow({
-    Title = 'Iroshida v2.2',
+    Title = 'Iroshida v2.3',
     Center = true,
     AutoShow = true,
     TabPadding = 8,
@@ -120,9 +120,7 @@ local lastSearchTime = 0
 local function getClosestItem(mode)
     if not Settings.FarmEnabled then return nil end
 
-    -- Если кэш пуст или папка исчезла (новый раунд), ищем заново
     if not cachedCoinContainer or not cachedCoinContainer.Parent then
-        -- Ограничиваем поиск: не чаще 1 раза в 2 секунды, чтобы не лагало в лобби
         if tick() - lastSearchTime < 2 then return nil end
         lastSearchTime = tick()
 
@@ -167,7 +165,7 @@ local function getClosestItem(mode)
 end
 
 -- ==========================================
--- 6. МОДУЛЬ ПОЛЕТА (ФАРМ С ФИЗИЧЕСКИМ СБОРОМ)
+-- 6. МОДУЛЬ ПОЛЕТА (Быстрый фарм без тормозов)
 -- ==========================================
 local flyConnection = nil
 local currentTarget = nil
@@ -199,7 +197,7 @@ local function startFarmLoop()
         end
 
         targetSearchTimer = targetSearchTimer + deltaTime
-        if targetSearchTimer > 0.5 or not currentTarget or not currentTarget.Parent then
+        if targetSearchTimer > 0.2 or not currentTarget or not currentTarget.Parent then
             currentTarget = getClosestItem(Settings.FarmMode)
             targetSearchTimer = 0
         end
@@ -207,22 +205,16 @@ local function startFarmLoop()
         if currentTarget and hrp then
             local distance = (currentTarget.Position - hrp.Position).Magnitude
             
-            -- Если мы вплотную к монете (меньше 3 стадов)
-            if distance < 3 then
+            -- РАДИУС СБОРА = 1 СТАД (Просто пролетаем сквозь)
+            if distance < 1 then
                 if not collectedCoins[currentTarget] then
                     collectedCoins[currentTarget] = true
                     currentCoins = currentCoins + 1 
-                    
-                    -- ФИЗИЧЕСКИЙ СБОР (Телепорт в центр монеты для срабатывания Touch)
-                    hrp.CFrame = currentTarget.CFrame
-                    
                     currentTarget = nil 
                 end
             else
                 local direction = (currentTarget.Position - hrp.Position).Unit
-                -- Ограничиваем скорость, чтобы не пролетать насквозь
-                local speed = math.min(Settings.FlySpeed, distance * 5)
-                bv.Velocity = direction * speed
+                bv.Velocity = direction * Settings.FlySpeed
             end
         else
             bv.Velocity = Vector3.new(0, 0, 0)
@@ -346,15 +338,6 @@ FarmGroup:AddSlider('FlySpeedSlider', {
     Callback = function(Value) Settings.FlySpeed = Value end
 })
 
-FarmGroup:AddSlider('CooldownSlider', {
-    Text = 'Задержка (сек)',
-    Default = 0.1,
-    Min = 0,
-    Max = 2,
-    Rounding = 1,
-    Callback = function(Value) Settings.Cooldown = Value end
-})
-
 local RoleGroup = Tabs.Farm:AddRightGroupbox('Role Logic')
 
 RoleGroup:AddToggle('AutoShootToggle', {
@@ -384,7 +367,6 @@ RoleGroup:AddToggle('MagnetToggle', {
 RoleGroup:AddToggle('FarmExpToggle', {
     Text = 'Фарм EXP (Без Reset)',
     Default = true,
-    Tooltip = 'Если включено, невиновный не будет умирать после сбора монет.',
     Callback = function(Value) Settings.FarmExp = Value end
 })
 
@@ -452,12 +434,6 @@ PerformanceGroup:AddToggle('GreySky', {
     end
 })
 
-PerformanceGroup:AddToggle('NoclipToggle', {
-    Text = 'Noclip (Проход сквозь стены)',
-    Default = true,
-    Callback = function(Value) Settings.Noclip = Value end
-})
-
 PerformanceGroup:AddButton('Убить эффекты (Дым/Огонь)', function()
     for _, obj in pairs(Workspace:GetDescendants()) do
         if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") then
@@ -494,20 +470,15 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 10. МОДУЛЬ NOCLIP (Привязан к фарму)
+-- 10. ОПТИМИЗИРОВАННЫЙ NOCLIP (Без лагов)
 -- ==========================================
-RunService.Stepped:Connect(function()
-    if Settings.FarmEnabled and Settings.Noclip and LocalPlayer.Character then
-        for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide then
-                part.CanCollide = false
-            end
-        end
-    else
+task.spawn(function()
+    while task.wait(0.5) do
         if LocalPlayer.Character then
+            local shouldCollide = not (Settings.FarmEnabled and Settings.Noclip)
             for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
                 if part:IsA("BasePart") and not part:FindFirstAncestorOfClass("Accessory") then
-                    part.CanCollide = true
+                    part.CanCollide = shouldCollide
                 end
             end
         end
@@ -532,4 +503,4 @@ SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
 
-print("[Iroshida v2.2] Загружен успешно!")
+print("[Iroshida v2.3] Загружен успешно!")
