@@ -1,314 +1,382 @@
 -- ==========================================
--- MM2 TRADE HELPER v4.1 (Debug Edition)
+-- IROSHIDA v1.0 (Beta Build)
+-- Script made by Nick9l
 -- ==========================================
 
-local YOUR_NAME = "Nick9l"
-local key_p1 = "rbx_" 
-local key_p2 = "5853d75be1c90cdaf60d8f62a89507bbdc2818578a4142e2" -- Напоминаю, без 'rbx_'
-local API_KEY = key_p1 .. key_p2
-local API_URL = "https://api.rblxvalue.com/v2/items/"
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+local VirtualUser = game:GetService("VirtualUser")
 
-local RARITY_COLORS = {
-    ["Common"] = Color3.fromRGB(150, 150, 150),
-    ["Uncommon"] = Color3.fromRGB(0, 255, 255),
-    ["Rare"] = Color3.fromRGB(0, 255, 0),
-    ["Legendary"] = Color3.fromRGB(255, 50, 50),
-    ["Godly"] = Color3.fromRGB(170, 0, 255),
-    ["Chroma"] = Color3.fromRGB(255, 0, 128),
-    ["Ancient"] = Color3.fromRGB(255, 165, 0),
-}
+-- ==========================================
+-- 1. ЗАГРУЗОЧНЫЙ ЭКРАН
+-- ==========================================
+local Splash = Instance.new("ScreenGui")
+Splash.Parent = CoreGui
+Splash.IgnoreGuiInset = true
 
--- Загрузочный экран
-local SplashGui = Instance.new("ScreenGui")
-SplashGui.Parent = game.CoreGui
-local SplashFrame = Instance.new("Frame")
-SplashFrame.Parent = SplashGui
-SplashFrame.Size = UDim2.new(1, 0, 1, 0)
-SplashFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 local SplashText = Instance.new("TextLabel")
-SplashText.Parent = SplashFrame
+SplashText.Parent = Splash
 SplashText.Size = UDim2.new(1, 0, 1, 0)
-SplashText.BackgroundTransparency = 1
-SplashText.Text = "Добро пожаловать, " .. YOUR_NAME .. "!"
+SplashText.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+SplashText.Text = "Привет."
 SplashText.TextColor3 = Color3.fromRGB(255, 255, 255)
 SplashText.Font = Enum.Font.SourceSansBold
-SplashText.TextSize = 30
+SplashText.TextSize = 40
+
 task.wait(1.5)
-SplashGui:Destroy()
+SplashText.Text = "Загрузка..."
+task.wait(1)
+SplashText.Text = "Iroshida | made by Nick9l"
+task.wait(1.5)
+Splash:Destroy()
 
--- Интерфейс
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = game.CoreGui
-local MainFrame = Instance.new("Frame")
-MainFrame.Parent = ScreenGui
-MainFrame.Size = UDim2.new(0, 520, 0, 450)
-MainFrame.Position = UDim2.new(0.5, -260, 0.5, -225)
-MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-MainFrame.BorderSizePixel = 2
-MainFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
-MainFrame.Active = true
-MainFrame.Draggable = true
+-- ==========================================
+-- 2. ЗАГРУЗКА UI (LINORIA)
+-- ==========================================
+local repo = 'https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/'
+local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
+local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
+local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
 
-local Title = Instance.new("TextLabel")
-Title.Parent = MainFrame
-Title.Size = UDim2.new(1, 0, 0, 35)
-Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-Title.Text = "MM2 Trade Helper | " .. YOUR_NAME
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.Font = Enum.Font.SourceSansBold
-Title.TextSize = 18
+local Window = Library:CreateWindow({
+    Title = 'Iroshida v1.0',
+    Center = true,
+    AutoShow = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.1
+})
 
-local function createTradeSide(xOffset, titleText)
-    local SideFrame = Instance.new("Frame")
-    SideFrame.Parent = MainFrame
-    SideFrame.Size = UDim2.new(0.45, 0, 0.6, 0)
-    SideFrame.Position = UDim2.new(xOffset, 0, 0.1, 0)
-    SideFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    
-    local SideTitle = Instance.new("TextLabel")
-    SideTitle.Parent = SideFrame
-    SideTitle.Size = UDim2.new(1, 0, 0, 25)
-    SideTitle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    SideTitle.Text = titleText
-    SideTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SideTitle.Font = Enum.Font.SourceSansBold
-    
-    local InputBox = Instance.new("TextBox")
-    InputBox.Parent = SideFrame
-    InputBox.Size = UDim2.new(0.65, 0, 0, 30)
-    InputBox.Position = UDim2.new(0.05, 0, 0.1, 0)
-    InputBox.PlaceholderText = "Название..."
-    InputBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    
-    local AddBtn = Instance.new("TextButton")
-    AddBtn.Parent = SideFrame
-    AddBtn.Size = UDim2.new(0.25, 0, 0, 30)
-    AddBtn.Position = UDim2.new(0.72, 0, 0.1, 0)
-    AddBtn.Text = "+"
-    AddBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-    AddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    AddBtn.Font = Enum.Font.SourceSansBold
-    AddBtn.TextSize = 20
-    
-    local ListFrame = Instance.new("ScrollingFrame")
-    ListFrame.Parent = SideFrame
-    ListFrame.Size = UDim2.new(0.9, 0, 0.7, 0)
-    ListFrame.Position = UDim2.new(0.05, 0, 0.22, 0)
-    ListFrame.BackgroundTransparency = 1
-    ListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    
-    local UIListLayout = Instance.new("UIListLayout")
-    UIListLayout.Parent = ListFrame
-    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Padding = UDim.new(0, 2)
-    
-    local SideSum = Instance.new("TextLabel")
-    SideSum.Parent = SideFrame
-    SideSum.Size = UDim2.new(1, 0, 0, 25)
-    SideSum.Position = UDim2.new(0, 0, 0.95, 0)
-    SideSum.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    SideSum.Text = "Сумма: 0"
-    SideSum.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SideSum.Font = Enum.Font.SourceSansBold
+local Tabs = {
+    Farm = Window:AddTab('AutoFarm'),
+    Performance = Window:AddTab('Performance'),
+    Settings = Window:AddTab('Settings'),
+}
 
-    return InputBox, AddBtn, ListFrame, SideSum
-end
+-- ==========================================
+-- 3. ПЕРЕМЕННЫЕ И НАСТРОЙКИ
+-- ==========================================
+local Settings = {
+    FarmEnabled = false,
+    CoinLimit = 50,
+    FlySpeed = 50,
+    Cooldown = 0.1,
+    MagnetEnabled = false,
+    AutoShoot = true,
+    InnocentTimeout = 35,
+    RamMode = "Off",
+    RamInterval = 30
+}
 
-local MyInput, MyAdd, MyList, MySumLabel = createTradeSide(0.02, "Твои предметы")
-local HisInput, HisAdd, HisList, HisSumLabel = createTradeSide(0.53, "Предметы оппонента")
+local currentCoins = 0
+local isInfection = false
+local myRole = "Innocent" -- Innocent, Sheriff, Murderer, Survivor, Zombie
 
--- Шкала
-local BarBackground = Instance.new("Frame")
-BarBackground.Parent = MainFrame
-BarBackground.Size = UDim2.new(0.9, 0, 0, 20)
-BarBackground.Position = UDim2.new(0.05, 0, 0.75, 0)
-BarBackground.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+-- ==========================================
+-- 4. ЯДРО (ОПРЕДЕЛЕНИЕ РЕЖИМА И РОЛИ)
+-- ==========================================
+local function updateGameState()
+    local knives = 0
+    local guns = 0
+    myRole = "Innocent"
 
-local BarFill = Instance.new("Frame")
-BarFill.Parent = BarBackground
-BarFill.Size = UDim2.new(0.5, 0, 1, 0)
-BarFill.Position = UDim2.new(0.5, 0, 0, 0)
-BarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-
-local ResultText = Instance.new("TextLabel")
-ResultText.Parent = MainFrame
-ResultText.Size = UDim2.new(0.9, 0, 0, 40)
-ResultText.Position = UDim2.new(0.05, 0, 0.83, 0)
-ResultText.BackgroundTransparency = 1
-ResultText.Text = "Ожидание..."
-ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
-ResultText.Font = Enum.Font.SourceSansBold
-ResultText.TextSize = 16
-ResultText.TextWrapped = true
-
-local myItems = {}
-local hisItems = {}
-
-local function getItemData(name)
-    local encodedName = string.gsub(name, " ", "%%20")
-    local url = API_URL .. encodedName
-    
-    local success, response = pcall(function()
-        -- Добавил true для HttpGetAsync, чтобы он не крашил игру
-        return game:HttpGetAsync(url, true, {["X-Api-Key"] = API_KEY})
-    end)
-
-    if success then
-        -- Пытаемся найти цену
-        local value = string.match(response, '"value":%s*(%d+)')
-        if not value then value = string.match(response, '"price":%s*(%d+)') end
-        
-        local rarity = string.match(response, '"rarity":"([^"]+)"')
-        
-        if value then
-            return tonumber(value), rarity or "Unknown", "OK"
-        else
-            -- Если ответ есть, но цены нет, возможно предмет не найден
-            return 0, "Unknown", "Предмет не найден (или неверное имя)"
+    for _, player in pairs(Players:GetPlayers()) do
+        if player.Backpack then
+            if player.Backpack:FindFirstChild("Knife") then knives = knives + 1 end
+            if player.Backpack:FindFirstChild("Gun") then guns = guns + 1 end
         end
-    else
-        -- Если запрос не прошел, выводим ошибку
-        return 0, "Unknown", "Ошибка API: " .. tostring(response)
+    end
+
+    isInfection = (knives >= 2 or guns >= 2)
+
+    -- Определение своей роли
+    if LocalPlayer.Backpack then
+        if LocalPlayer.Backpack:FindFirstChild("Knife") then
+            myRole = isInfection and "Zombie" or "Murderer"
+        elseif LocalPlayer.Backpack:FindFirstChild("Gun") then
+            myRole = isInfection and "Survivor" or "Sheriff"
+        else
+            myRole = "Innocent"
+        end
     end
 end
 
-local function updateUI()
-    for _, child in ipairs(MyList:GetChildren()) do if child:IsA("TextLabel") then child:Destroy() end end
-    for _, child in ipairs(HisList:GetChildren()) do if child:IsA("TextLabel") then child:Destroy() end end
+-- ==========================================
+-- 5. МОДУЛЬ ФАРМА (ПОЛЕТ К МОНЕТАМ)
+-- ==========================================
+local function getClosestCoin()
+    local coinContainer = Workspace:FindFirstChild("Normal") and Workspace.Normal:FindFirstChild("CoinContainer")
+    if not coinContainer then return nil end
 
-    local myTotal = 0
-    local hisTotal = 0
-    local lastError = ""
+    local closestCoin = nil
+    local shortestDistance = math.huge
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
 
-    for i, item in ipairs(myItems) do
-        local val, rarity, status = getItemData(item.name)
-        if status ~= "OK" then lastError = status end
-        myTotal = myTotal + (val * item.count)
-        
-        local lbl = Instance.new("TextLabel")
-        lbl.Parent = MyList
-        lbl.Size = UDim2.new(0.8, 0, 0, 25)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "") .. " (" .. val .. ")"
-        lbl.TextColor3 = RARITY_COLORS[rarity] or Color3.fromRGB(255, 255, 255)
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.LayoutOrder = i
-        
-        -- Кнопка добавления
-        local plusBtn = Instance.new("TextButton")
-        plusBtn.Parent = lbl
-        plusBtn.Size = UDim2.new(0.1, 0, 1, 0)
-        plusBtn.Position = UDim2.new(0.6, 0, 0, 0)
-        plusBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-        plusBtn.Text = "+"
-        plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        plusBtn.MouseButton1Click:Connect(function()
-            item.count = item.count + 1
-            updateUI()
-        end)
-
-        -- Кнопка удаления (корзина)
-        local delBtn = Instance.new("TextButton")
-        delBtn.Parent = lbl
-        delBtn.Size = UDim2.new(0.1, 0, 1, 0)
-        delBtn.Position = UDim2.new(0.85, 0, 0, 0)
-        delBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
-        delBtn.Text = "X"
-        delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        delBtn.MouseButton1Click:Connect(function()
-            table.remove(myItems, i)
-            updateUI()
-        end)
+    for _, coin in pairs(coinContainer:GetChildren()) do
+        if coin:IsA("BasePart") then
+            local distance = (coin.Position - hrp.Position).Magnitude
+            if distance < shortestDistance then
+                shortestDistance = distance
+                closestCoin = coin
+            end
+        end
     end
-    MyList.CanvasSize = UDim2.new(0, 0, 0, #myItems * 27)
+    return closestCoin
+end
 
-    for i, item in ipairs(hisItems) do
-        local val, rarity, status = getItemData(item.name)
-        if status ~= "OK" then lastError = status end
-        hisTotal = hisTotal + (val * item.count)
+local function startFarmLoop()
+    task.spawn(function()
+        while Settings.FarmEnabled do
+            task.wait(Settings.Cooldown)
+            
+            if currentCoins >= Settings.CoinLimit then
+                Settings.FarmEnabled = false
+                Library:Notify("Лимит монет достигнут!", 3)
+                break
+            end
+
+            local targetCoin = getClosestCoin()
+            local character = LocalPlayer.Character
+            local hrp = character and character:FindFirstChild("HumanoidRootPart")
+            
+            if targetCoin and hrp then
+                -- Плавный полет через BodyVelocity
+                local bv = hrp:FindFirstChild("IroshidaVelocity") or Instance.new("BodyVelocity")
+                bv.Name = "IroshidaVelocity"
+                bv.Parent = hrp
+                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                
+                -- Направление к монете
+                local direction = (targetCoin.Position - hrp.Position).Unit
+                bv.Velocity = direction * Settings.FlySpeed
+                
+                -- Если долетели, отключаем скорость
+                if (targetCoin.Position - hrp.Position).Magnitude < 5 then
+                    bv.Velocity = Vector3.new(0, 0, 0)
+                    currentCoins = currentCoins + 1 -- Условный подсчет
+                end
+            end
+        end
         
-        local lbl = Instance.new("TextLabel")
-        lbl.Parent = HisList
-        lbl.Size = UDim2.new(0.8, 0, 0, 25)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = item.name .. (item.count > 1 and " x" .. item.count or "") .. " (" .. val .. ")"
-        lbl.TextColor3 = RARITY_COLORS[rarity] or Color3.fromRGB(255, 255, 255)
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.LayoutOrder = i
-        
-        local plusBtn = Instance.new("TextButton")
-        plusBtn.Parent = lbl
-        plusBtn.Size = UDim2.new(0.1, 0, 1, 0)
-        plusBtn.Position = UDim2.new(0.6, 0, 0, 0)
-        plusBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-        plusBtn.Text = "+"
-        plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        plusBtn.MouseButton1Click:Connect(function()
-            item.count = item.count + 1
-            updateUI()
-        end)
+        -- Очистка при выключении
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local bv = LocalPlayer.Character.HumanoidRootPart:FindFirstChild("IroshidaVelocity")
+            if bv then bv:Destroy() end
+        end
+    end)
+end
 
-        local delBtn = Instance.new("TextButton")
-        delBtn.Parent = lbl
-        delBtn.Size = UDim2.new(0.1, 0, 1, 0)
-        delBtn.Position = UDim2.new(0.85, 0, 0, 0)
-        delBtn.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
-        delBtn.Text = "X"
-        delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        delBtn.MouseButton1Click:Connect(function()
-            table.remove(hisItems, i)
-            updateUI()
-        end)
+-- ==========================================
+-- 6. ЛОГИКА РОЛЕЙ (КЛАССИКА И ИНФЕКЦИЯ)
+-- ==========================================
+local function handleRoleLogic()
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            if not Settings.FarmEnabled then continue end -- Ждем, пока нафармит
+
+            updateGameState()
+
+            if not isInfection then
+                -- КЛАССИКА
+                if myRole == "Murderer" then
+                    -- Терминатор
+                    for _, player in pairs(Players:GetPlayers()) do
+                        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame
+                            task.wait(0.2)
+                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            task.wait(0.5)
+                        end
+                    end
+                elseif myRole == "Sheriff" and Settings.AutoShoot then
+                    -- Стрельба в убийцу
+                    for _, player in pairs(Players:GetPlayers()) do
+                        if player.Backpack and player.Backpack:FindFirstChild("Knife") and player.Character then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, player.Character.HumanoidRootPart.Position)
+                            task.wait(0.1)
+                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                        end
+                    end
+                elseif myRole == "Innocent" and Settings.AutoShoot then
+                    -- Ждем пистолет
+                    local gunDrop = Workspace:FindFirstChild("Normal") and Workspace.Normal:FindFirstChild("GunDrop")
+                    if gunDrop then
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = gunDrop.CFrame
+                        task.wait(0.5)
+                        -- После подбора стреляем
+                    else
+                        task.wait(Settings.InnocentTimeout) -- Ждем тайм-аут
+                        if myRole == "Innocent" and not gunDrop then
+                            LocalPlayer.Character:BreakJoints() -- Reset
+                        end
+                    end
+                end
+            else
+                -- ИНФЕКЦИЯ
+                if myRole == "Survivor" then
+                    -- Идем заражаться
+                    for _, player in pairs(Players:GetPlayers()) do
+                        if player.Backpack and player.Backpack:FindFirstChild("Knife") and player.Character then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame
+                            break
+                        end
+                    end
+                elseif myRole == "Zombie" and Settings.MagnetEnabled then
+                    -- Магнит (убиваем всех)
+                    for _, player in pairs(Players:GetPlayers()) do
+                        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                            LocalPlayer.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame
+                            task.wait(0.1)
+                            VirtualUser:Button1Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- 7. ИНТЕРФЕЙС AUTO FARM
+-- ==========================================
+local FarmGroup = Tabs.Farm:AddLeftGroupbox('Farm Settings')
+
+FarmGroup:AddToggle('FarmToggle', {
+    Text = 'Включить фарм',
+    Default = false,
+    Callback = function(Value)
+        Settings.FarmEnabled = Value
+        if Value then
+            currentCoins = 0
+            startFarmLoop()
+            handleRoleLogic()
+        end
     end
-    HisList.CanvasSize = UDim2.new(0, 0, 0, #hisItems * 27)
+})
 
-    MySumLabel.Text = "Сумма: " .. myTotal
-    HisSumLabel.Text = "Сумма: " .. hisTotal
+FarmGroup:AddInput('CoinLimitInput', {
+    Default = "50",
+    Numeric = true,
+    Text = 'Лимит монет',
+    Callback = function(Value) Settings.CoinLimit = tonumber(Value) or 50 end
+})
 
-    local total = myTotal + hisTotal
-    if total > 0 then
-        local myRatio = myTotal / total
-        BarFill.Size = UDim2.new(myRatio, 0, 1, 0)
-        BarFill.Position = UDim2.new(1 - myRatio, 0, 0, 0)
-    else
-        BarFill.Size = UDim2.new(0.5, 0, 1, 0)
-        BarFill.Position = UDim2.new(0.5, 0, 0, 0)
-    end
+FarmGroup:AddSlider('FlySpeedSlider', {
+    Text = 'Скорость полета',
+    Default = 50,
+    Min = 1,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(Value) Settings.FlySpeed = Value end
+})
 
-    if myTotal > hisTotal then
-        ResultText.Text = "🔥 Ты выигрываешь на " .. (myTotal - hisTotal) .. "!"
-        ResultText.TextColor3 = Color3.fromRGB(0, 255, 0)
-        BarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-    elseif myTotal < hisTotal then
-        ResultText.Text = "❌ Ты проигрываешь на " .. (hisTotal - myTotal) .. "!"
-        ResultText.TextColor3 = Color3.fromRGB(255, 50, 50)
-        BarFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-    else
-        ResultText.Text = "⚖️ Равный обмен"
-        ResultText.TextColor3 = Color3.fromRGB(255, 255, 255)
-        BarFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    end
-    
-    -- Если была ошибка API, выводим её внизу красным
-    if lastError ~= "" then
-        ResultText.Text = ResultText.Text .. "\n(" .. lastError .. ")"
-        ResultText.TextColor3 = Color3.fromRGB(255, 150, 0) -- Оранжевый
+FarmGroup:AddSlider('CooldownSlider', {
+    Text = 'Задержка (сек)',
+    Default = 0.1,
+    Min = 0,
+    Max = 2,
+    Rounding = 1,
+    Callback = function(Value) Settings.Cooldown = Value end
+})
+
+local RoleGroup = Tabs.Farm:AddRightGroupbox('Role Logic')
+
+RoleGroup:AddToggle('AutoShootToggle', {
+    Text = 'Авто-Стрельба / Убийство',
+    Default = true,
+    Callback = function(Value) Settings.AutoShoot = Value end
+})
+
+RoleGroup:AddToggle('MagnetToggle', {
+    Text = 'Магнит (Инфекция)',
+    Default = false,
+    Callback = function(Value) Settings.MagnetEnabled = Value end
+})
+
+-- ==========================================
+-- 8. ИНТЕРФЕЙС PERFORMANCE
+-- ==========================================
+local PerformanceGroup = Tabs.Performance:AddLeftGroupbox('Optimization')
+
+local plasticEnabled = false
+local originalMaterials = {}
+
+local function applyPlastic()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Material ~= Enum.Material.Plastic then
+            if not originalMaterials[obj] then originalMaterials[obj] = obj.Material end
+            obj.Material = Enum.Material.Plastic
+        end
     end
 end
 
-MyAdd.MouseButton1Click:Connect(function()
-    if MyInput.Text ~= "" then
-        table.insert(myItems, {name = MyInput.Text, count = 1})
-        MyInput.Text = ""
-        updateUI()
+local function restoreVisuals()
+    for obj, mat in pairs(originalMaterials) do
+        if obj and obj.Parent then obj.Material = mat end
+    end
+    originalMaterials = {}
+end
+
+PerformanceGroup:AddToggle('PlasticMode', {
+    Text = 'Plastic World (FPS Boost)',
+    Default = false,
+    Callback = function(Value)
+        plasticEnabled = Value
+        if plasticEnabled then applyPlastic() else restoreVisuals() end
+    end
+})
+
+PerformanceGroup:AddDropdown('RAMMode', {
+    Text = 'RAM Cleanup Mode',
+    Default = 'Off',
+    Values = { 'Off', 'Smart', 'Aggressive' },
+    Callback = function(Value) Settings.RamMode = Value end
+})
+
+PerformanceGroup:AddSlider('RAMInterval', {
+    Text = 'Cleanup Interval (sec)',
+    Default = 30,
+    Min = 5,
+    Max = 120,
+    Rounding = 0,
+    Callback = function(Value) Settings.RamInterval = Value end
+})
+
+-- Цикл очистки памяти
+task.spawn(function()
+    while task.wait(Settings.RamInterval) do
+        if Settings.RamMode == "Smart" then
+            collectgarbage("step")
+        elseif Settings.RamMode == "Aggressive" then
+            collectgarbage("collect")
+        end
     end
 end)
 
-HisAdd.MouseButton1Click:Connect(function()
-    if HisInput.Text ~= "" then
-        table.insert(hisItems, {name = HisInput.Text, count = 1})
-        HisInput.Text = ""
-        updateUI()
-    end
-end)
+-- ==========================================
+-- 9. НАСТРОЙКИ UI
+-- ==========================================
+local MenuGroup = Tabs.Settings:AddLeftGroupbox('Menu')
+MenuGroup:AddButton('Unload', function() Library:Unload() end)
+MenuGroup:AddLabel('Menu bind'):AddKeyPicker('MenuKeybind', { Default = 'RightShift', NoUI = true, Text = 'Menu keybind' })
+Library.ToggleKeybind = Options.MenuKeybind
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ 'MenuKeybind' })
+ThemeManager:SetFolder('Iroshida')
+SaveManager:SetFolder('Iroshida/configs')
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:LoadAutoloadConfig()
+
+print("[Iroshida] Успешно загружен!")
